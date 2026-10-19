@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """ios-zeus probe runner: boot the probe on zeus and capture its log. No questions.
 
-  python3 tools/zeus-probe.py [--probe 1|2|3]     (from the repo root, after git pull)
+  python3 tools/zeus-probe.py [--probe 1|2|3|4]     (from the repo root, after git pull)
 
-  1. Builds shim/out/zeus-probe3.img if clang + ld.lld exist, else uses prebuilt/.
+  1. Builds shim/out/zeus-probe4.img if clang + ld.lld exist, else uses prebuilt/.
   2. Finds the phone: exactly one fastboot device, or one adb device which it
      reboots into fastboot. Stops unless product = zeus and unlocked = yes.
   3. `fastboot boot` (RAM only, nothing is flashed).
@@ -19,7 +19,7 @@ Safety: the only phone commands this script can run are listed in ALLOWED.
 import argparse, datetime, glob, hashlib, os, re, shutil, subprocess, sys, termios, time, tty
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-LATEST = 3	# shim/ builds this probe; older ones run from prebuilt/
+LATEST = 4	# shim/ builds this probe; older ones run from prebuilt/
 
 # argv patterns this script may send to the phone (None = any). Nothing that writes flash.
 ALLOWED = [
@@ -242,7 +242,7 @@ def main():
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--probe", type=int, choices=(1, 2, 3), default=3)
+    ap.add_argument("--probe", type=int, choices=(1, 2, 3, 4), default=4)
     ARGS = ap.parse_args()
     PHONE_LOG = os.path.join(ROOT, "logs", f"probe{ARGS.probe}-{STAMP}-phone.txt")
     os.makedirs(os.path.join(ROOT, "logs"), exist_ok=True)

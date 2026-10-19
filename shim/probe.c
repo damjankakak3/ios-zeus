@@ -1,7 +1,7 @@
 /*
- * zeus probe 3: probe 2 (screen + USB serial log, usb.c) plus a memory
- * watch for the noise that grows over the screen: is the framebuffer RAM
- * itself being overwritten, and do stale cache lines from ABL do it?
+ * zeus probe 4: screen + USB serial log (usb.c), the memory watch from
+ * probe 3 (the noise was stale ABL cache lines: fixed by DC CIVAC), and a
+ * pointer authentication test (can EL1 set the PAC keys under Gunyah?).
  *
  * Safety: no storage code. Memory writes: own image/stack/buffers and the
  * ABL splash framebuffer, and a 32 MB test area at MEMTEST_BASE (free RAM
@@ -335,6 +335,52 @@ static void mem_report(void)
 	}
 }
 
+
+/* ---------- pointer authentication ---------- */
+
+#define APIAKEYLO	"S3_0_C2_C1_0"
+#define APIAKEYHI	"S3_0_C2_C1_1"
+#define ID_AA64ISAR1	"S3_0_C0_C6_1"
+#define ID_AA64ISAR2	"S3_0_C0_C6_2"
+
+/* PAC with key IA: does EL1 own the keys, and does sign + auth round-trip?
+ * A trap to the hypervisor would show up as the red exception screen. */
+static void pac_test(void)
+{
+	uint64_t isar1, isar2, sctlr, lo, hi;
+	__asm__ volatile("mrs %0, " ID_AA64ISAR1 "; mrs %1, " ID_AA64ISAR2 : "=r"(isar1), "=r"(isar2));
+	line("PAC ISAR1 ", isar1, 16);
+	line("PAC ISAR2 ", isar2, 16);
+	puts_c("  APA ", C_GRAY); putdec((isar1 >> 4) & 0xf, C_WHITE);
+	puts_c(" API ", C_GRAY); putdec((isar1 >> 8) & 0xf, C_WHITE);
+	puts_c(" GPA ", C_GRAY); putdec((isar1 >> 24) & 0xf, C_WHITE);
+	puts_c(" GPI ", C_GRAY); putdec((isar1 >> 28) & 0xf, C_WHITE);
+	puts_c(" APA3 ", C_GRAY); putdec((isar2 >> 12) & 0xf, C_WHITE);
+	puts_c("\n", 0);
+	if (!(((isar1 >> 4) & 0xf) || ((isar1 >> 8) & 0xf) || ((isar2 >> 12) & 0xf))) {
+		puts_c("PAC: not implemented\n", C_RED);
+		return;
+	}
+	puts_c("PAC: writing APIAKey...\n", C_GRAY);
+	__asm__ volatile("msr " APIAKEYLO ", %0; msr " APIAKEYHI ", %1; isb"
+			 :: "r"(0x0123456789abcdefUL), "r"(0xfedcba9876543210UL));
+	__asm__ volatile("mrs %0, " APIAKEYLO "; mrs %1, " APIAKEYHI : "=r"(lo), "=r"(hi));
+	line("  key lo  ", lo, 16);
+	line("  key hi  ", hi, 16);
+	__asm__ volatile("mrs %0, sctlr_el1" : "=r"(sctlr));
+	__asm__ volatile("msr sctlr_el1, %0; isb" :: "r"(sctlr | (1UL << 31)));	/* EnIA */
+	uint64_t p = 0x0000001234567890UL, mod = 0x42, signed_p = p, auth = 0;
+	__asm__ volatile(".arch_extension pauth\n pacia %0, %1" : "+r"(signed_p) : "r"(mod));
+	auth = signed_p;
+	__asm__ volatile(".arch_extension pauth\n autia %0, %1" : "+r"(auth) : "r"(mod));
+	__asm__ volatile("msr sctlr_el1, %0; isb" :: "r"(sctlr));		/* back as it was */
+	line("  ptr     ", p, 16);
+	line("  signed  ", signed_p, 16);
+	line("  auth    ", auth, 16);
+	puts_c(auth == p && signed_p != p ? "PAC: WORKS\n" : "PAC: FAILED\n",
+	       auth == p && signed_p != p ? C_GREEN : C_RED);
+}
+
 /* ---------- probe ---------- */
 
 void probe_exception(uint64_t slot)
@@ -381,7 +427,7 @@ void probe_main(const uint8_t *dtb, uint64_t load)
 	cache_flush((uint64_t)fb, fb_size);	/* drop ABL's cache lines first */
 	rect(0, 0, fb_w, fb_h, C_BG);
 	bands();
-	puts_c("ios-zeus probe 3\n", C_YEL);
+	puts_c("ios-zeus probe 4\n", C_YEL);
 	kick();
 
 	uint64_t el, mpidr, midr;
@@ -420,6 +466,7 @@ void probe_main(const uint8_t *dtb, uint64_t load)
 
 	usb_start();
 	kick();
+	pac_test();
 
 	cache_flush(MEMTEST_BASE, MEMTEST_HALF);
 	mem_fill(MEMTEST_BASE, 2 * MEMTEST_HALF);

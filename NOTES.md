@@ -25,7 +25,14 @@
   **The noise band grows**: ~420 lines at t=0 (probe 1), ~half the screen at t=20 s (probe 2). Something overwrites
   the framebuffer RAM (or the display shows something else) over time. Candidates: stale dirty cache lines from ABL
   written back over our uncached writes; another agent (VM/DSP) using that RAM; a display-side effect.
-- **Probe 3 (built, QEMU-tested, NOT run yet):** probe 2 + DC CIVAC over the whole splash region before drawing;
+- **2026-10-19 PROBE 3 ON THE PHONE (user report): no more noise.** DC CIVAC over the splash region before drawing
+  fixed it -> the noise was **stale dirty cache lines left by ABL**, written back over our uncached writes.
+  Consequence: the kernel loader must clean+invalidate every region it writes (kernel, ADT, boot args) before
+  XNU turns caches on. Probe 3 phone log (memA/memB test areas): not uploaded yet.
+- **Probe 4 (built, QEMU-tested at EL1, NOT run yet):** probe 3 + PAC test: ID_AA64ISAR1/2, write APIAKeyLo/Hi
+  at EL1, read back, SCTLR_EL1.EnIA on, PACIA + AUTIA round trip, EnIA restored. QEMU: "PAC: WORKS". On the
+  phone a trap of the key write to Gunyah would show as the red exception screen. Runner default = probe 4.
+- Probe 3 details: probe 2 + DC CIVAC over the whole splash region before drawing;
   32 MB RAM test at 0xb0000000 (A = flushed first, B = not), pattern-checked every 5 s; framebuffer hashed in 32
   bands of 100 lines every 5 s (ticker band skipped, snapshot after our own printing) -> USB log says which bands
   changed and a sample of the new data. QEMU: no false positives over 30 s. Runner default is now probe 3.
