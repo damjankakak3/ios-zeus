@@ -1,22 +1,23 @@
 /*
- * zeus probe, stage 1: does `fastboot boot` reach our code, and can we
- * get pixels onto the command-mode panel?
+ * zeus probe 2: everything probe 1 showed, a dump of all display pipes,
+ * and the log streamed over USB as a serial port (usb.c).
  *
- * Safety: this program has no storage code. The only memory it writes is
- * its own image, its stack and the ABL splash framebuffer. The only
- * hardware register it writes is CTL_0 START of the display controller
- * (mdp_write below). Everything else is reads. It ends with PSCI
- * SYSTEM_RESET; Android boots again after that.
+ * Safety: no storage code. Memory writes: own image/stack/buffers and the
+ * ABL splash framebuffer. Register writes (all via wr32): CTL_0 START of
+ * the display controller, and the USB controller + its Qualcomm wrapper
+ * (usb.c). Ends with PSCI SYSTEM_RESET after 120 s; Android boots again.
  *
- * Runs with the MMU off (all data accesses are Device memory: keep them
- * aligned, -mstrict-align).
+ * MMU off: all data accesses are Device memory (-mstrict-align).
  */
-#include <stdint.h>
+#include "probe.h"
 #include "font.h"
 
 uint64_t psci_call(uint64_t fn, uint64_t a, uint64_t b, uint64_t c);
+uint32_t usb_events(void);
+int usb_configured(void);
 
 #define PSCI_SYSTEM_RESET	0x84000009UL
+#define RUN_SECONDS		120
 
 /* Display controller (stock DT: mdp_phys 0xae00000, offsets from it) */
 #ifndef MDP_BASE
@@ -25,8 +26,9 @@ uint64_t psci_call(uint64_t fn, uint64_t a, uint64_t b, uint64_t c);
 #define CTL0		(MDP_BASE + 0x16000)	/* qcom,sde-ctl-off[0], "primary" */
 #define CTL_START	0x1c
 #define INTF1		(MDP_BASE + 0x36000)	/* first DSI interface */
-#define PP0		(MDP_BASE + 0x6a000)
 #define SSPP_SRC_SIZE	0x00
+#define SSPP_OUT_SIZE	0x0c
+#define SSPP_OUT_XY	0x10
 #define SSPP_SRC0_ADDR	0x14
 #define SSPP_YSTRIDE0	0x24
 #define SSPP_FORMAT	0x30
@@ -35,46 +37,50 @@ uint64_t psci_call(uint64_t fn, uint64_t a, uint64_t b, uint64_t c);
 #define SPLASH_BASE	0xb8000000UL
 #define SPLASH_SIZE	0x2b00000UL
 
+/* Probe 1 photo: 1440x3200, stride 5760; ABL scans out two 720-wide halves. */
 static volatile uint8_t *fb = (volatile uint8_t *)SPLASH_BASE;
 static uint64_t fb_size = SPLASH_SIZE;
-static uint32_t fb_w = 1440, fb_h = 3200, fb_stride = 1440 * 4, fb_bpp = 4;
+static const uint32_t fb_w = 1440, fb_h = 3200, fb_stride = 1440 * 4;
 
-static inline uint32_t rd32(uint64_t a) { return *(volatile uint32_t *)a; }
+uint64_t now(void) { uint64_t v; __asm__ volatile("isb; mrs %0, cntvct_el0" : "=r"(v)); return v; }
+uint64_t freq(void) { uint64_t v; __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(v)); return v ? v : 19200000; }
+void delay_ms(uint64_t ms) { uint64_t end = now() + freq() / 1000 * ms; while (now() < end) ; }
 
-/* The one register write in this program. */
-static void mdp_write(uint64_t a, uint32_t v) { *(volatile uint32_t *)a = v; }
+static void kick(void) { wr32(CTL0 + CTL_START, 1); }
 
-static uint64_t now(void) { uint64_t v; __asm__ volatile("isb; mrs %0, cntvct_el0" : "=r"(v)); return v; }
-static uint64_t freq(void) { uint64_t v; __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(v)); return v ? v : 19200000; }
-static void delay_ms(uint64_t ms) { uint64_t end = now() + freq() / 1000 * ms; while (now() < end) ; }
+/* ---------- log buffer ---------- */
+
+#define LOG_SIZE	(256 * 1024)
+char logbuf[LOG_SIZE];
+volatile uint32_t loglen;
+static int log_on = 1;
+
+static void log_c(char c)
+{
+	if (log_on && loglen < LOG_SIZE)
+		logbuf[loglen++] = c;
+}
 
 /* ---------- framebuffer text ---------- */
 
-#define SCALE	4
+#define SCALE	3
 #define CW	(8 * SCALE)
 #define CH	(16 * SCALE)
-#define MARGIN	32
-
+#define MARGIN	24
+#define TOP_ROW	9		/* probe 1: top ~420 lines are covered by noise */
+#define BAND_H	300
+#define TICK_ROW ((int)((fb_h - BAND_H - MARGIN) / CH) - 1)
+#define LAST_ROW (TICK_ROW - 2)
 #define C_BG	0x00000000U
-#define C_WHITE	0x00ffffffU
-#define C_GRAY	0x00a0a0a0U
-#define C_RED	0x00ff0000U
-#define C_GREEN	0x0000ff00U
-#define C_BLUE	0x000000ffU
-#define C_YEL	0x00ffff00U
 
-static int row;
+static int row = TOP_ROW, col;
 
 static void px(uint32_t x, uint32_t y, uint32_t c)
 {
-	uint64_t off = (uint64_t)y * fb_stride + (uint64_t)x * fb_bpp;
-	if (x >= fb_w || y >= fb_h || off + fb_bpp > fb_size)
+	uint64_t off = (uint64_t)y * fb_stride + (uint64_t)x * 4;
+	if (x >= fb_w || y >= fb_h || off + 4 > fb_size)
 		return;
-	if (fb_bpp == 4) {
-		*(volatile uint32_t *)(fb + off) = 0xff000000U | c;
-	} else {
-		fb[off] = c; fb[off + 1] = c >> 8; fb[off + 2] = c >> 16;
-	}
+	*(volatile uint32_t *)(fb + off) = 0xff000000U | c;
 }
 
 static void rect(uint32_t x0, uint32_t y0, uint32_t w, uint32_t h, uint32_t c)
@@ -84,29 +90,37 @@ static void rect(uint32_t x0, uint32_t y0, uint32_t w, uint32_t h, uint32_t c)
 			px(x, y, c);
 }
 
-static void putc_at(int col, int r, char ch, uint32_t fg)
+static void putc_at(int cl, int r, char ch, uint32_t fg)
 {
 	if (ch < 0x20 || ch > 0x7e)
 		ch = '?';
 	const unsigned char *g = font8x16[ch - 0x20];
-	uint32_t x0 = MARGIN + col * CW, y0 = MARGIN + r * CH;
+	uint32_t x0 = MARGIN + cl * CW, y0 = MARGIN + r * CH;
 	for (int gy = 0; gy < 16; gy++)
 		for (int gx = 0; gx < 8; gx++)
 			rect(x0 + gx * SCALE, y0 + gy * SCALE, SCALE, SCALE,
 			     (g[gy] & (0x80 >> gx)) ? fg : C_BG);
 }
 
-static int col;
-
-static void puts_c(const char *s, uint32_t fg)
+void puts_c(const char *s, uint32_t fg)
 {
 	for (; *s; s++) {
-		if (*s == '\n') { row++; col = 0; continue; }
-		putc_at(col++, row, *s, fg);
+		log_c(*s);
+		if (*s == '\n') {
+			col = 0;
+			if (++row > LAST_ROW && log_on) {	/* wrap: clear the text area */
+				row = TOP_ROW;
+				rect(0, MARGIN + TOP_ROW * CH, fb_w, (LAST_ROW - TOP_ROW + 1) * CH, C_BG);
+			}
+			continue;
+		}
+		if ((uint32_t)(MARGIN + (col + 1) * CW) <= fb_w)
+			putc_at(col, row, *s, fg);
+		col++;
 	}
 }
 
-static void puthex(uint64_t v, int digits, uint32_t fg)
+void puthex(uint64_t v, int digits, uint32_t fg)
 {
 	char b[17];
 	for (int i = 0; i < digits; i++)
@@ -115,7 +129,7 @@ static void puthex(uint64_t v, int digits, uint32_t fg)
 	puts_c(b, fg);
 }
 
-static void putdec(uint64_t v, uint32_t fg)
+void putdec(uint64_t v, uint32_t fg)
 {
 	char b[21];
 	int i = 20;
@@ -124,17 +138,18 @@ static void putdec(uint64_t v, uint32_t fg)
 	puts_c(b + i, fg);
 }
 
-static void line(const char *label, uint64_t v, int digits)
+void line(const char *label, uint64_t v, int digits)
 {
 	puts_c(label, C_GRAY);
 	puthex(v, digits, C_WHITE);
 	puts_c("\n", 0);
 }
 
-static void clear(void)
+static void bands(void)
 {
-	rect(0, 0, fb_w, fb_h, C_BG);
-	row = col = 0;
+	rect(0, fb_h - BAND_H, fb_w / 3, BAND_H, C_RED);
+	rect(fb_w / 3, fb_h - BAND_H, fb_w / 3, BAND_H, C_GREEN);
+	rect(2 * fb_w / 3, fb_h - BAND_H, fb_w - 2 * (fb_w / 3), BAND_H, C_BLUE);
 }
 
 /* ---------- minimal FDT reader ---------- */
@@ -205,19 +220,16 @@ static const uint8_t *fdt_prop(const uint8_t *dtb, const char *path, const char 
 
 /* ---------- probe ---------- */
 
-static void kick(void)
-{
-	mdp_write(CTL0 + CTL_START, 1);
-}
-
 void probe_exception(uint64_t slot)
 {
 	static int nested;
-
 	uint64_t esr, elr, far;
 	__asm__ volatile("mrs %0, esr_el1; mrs %1, elr_el1; mrs %2, far_el1" : "=r"(esr), "=r"(elr), "=r"(far));
-	rect(0, 0, fb_w, 12 * CH, C_RED);
-	row = 1; col = 0;
+	if (nested > 1)		/* faulting inside the handler: just wait for the reset below */
+		for (;;) ;
+	rect(0, MARGIN + TOP_ROW * CH, fb_w, 8 * CH, C_RED);
+	row = TOP_ROW; col = 0;
+	log_on = 1;
 	puts_c("EXCEPTION - photo this screen\n", C_WHITE);
 	line("slot ", slot, 2);
 	line("ESR  ", esr, 16);
@@ -237,7 +249,7 @@ static void dump_regs(const char *label, uint64_t base, uint32_t from, int n)
 	line("", base + from, 8);
 	for (int i = 0; i < n; i++) {
 		puthex(rd32(base + from + 4 * i), 8, C_WHITE);
-		puts_c((i % 4 == 3) ? "\n" : " ", 0);
+		puts_c((i % 4 == 3 || i == n - 1) ? "\n" : " ", 0);
 	}
 }
 
@@ -249,93 +261,78 @@ void probe_main(const uint8_t *dtb, uint64_t load)
 		fb = (volatile uint8_t *)be64(v);
 		fb_size = be64(v + 8);
 	}
-
-	/* 1. draw with the DT defaults: visible already if the panel refreshes itself */
-	clear();
-	rect(0, fb_h - 400, fb_w / 3, 400, C_RED);
-	rect(fb_w / 3, fb_h - 400, fb_w / 3, 400, C_GREEN);
-	rect(2 * fb_w / 3, fb_h - 400, fb_w - 2 * (fb_w / 3), 400, C_BLUE);
-	puts_c("ios-zeus probe 1\n", C_YEL);
-	puts_c("bands: red green blue\n\n", C_WHITE);
+	rect(0, 0, fb_w, fb_h, C_BG);
+	bands();
+	puts_c("ios-zeus probe 2\n", C_YEL);
 	kick();
 
-	/* 2. find the pipe ABL scans out from; trust its geometry */
-	static const uint32_t sspp_off[8] = { 0x5000, 0x7000, 0x9000, 0xb000, 0x25000, 0x27000, 0x29000, 0x2b000 };
-	int found = -1;
-	uint32_t s_addr = 0, s_size = 0, s_stride = 0, s_fmt = 0;
-	for (int i = 0; i < 8; i++) {
-		uint64_t b = MDP_BASE + sspp_off[i];
-		uint32_t a = rd32(b + SSPP_SRC0_ADDR);
-		if (a >= (uint64_t)fb && a < (uint64_t)fb + fb_size) {
-			found = i;
-			s_addr = a;
-			s_size = rd32(b + SSPP_SRC_SIZE);
-			s_stride = rd32(b + SSPP_YSTRIDE0) & 0xffff;
-			s_fmt = rd32(b + SSPP_FORMAT);
-			break;
-		}
-	}
-	if (found >= 0 && (s_size & 0xffff) && s_stride) {
-		uint32_t w = s_size & 0xffff, h = s_size >> 16;
-		uint32_t bpp = s_stride / w;
-		if ((bpp == 3 || bpp == 4) && h) {
-			fb_size -= s_addr - (uint64_t)fb;
-			fb = (volatile uint8_t *)(uint64_t)s_addr;
-			fb_w = w; fb_h = h; fb_stride = s_stride; fb_bpp = bpp;
-			clear();
-			rect(0, fb_h - 400, fb_w / 3, 400, C_RED);
-			rect(fb_w / 3, fb_h - 400, fb_w / 3, 400, C_GREEN);
-			rect(2 * fb_w / 3, fb_h - 400, fb_w - 2 * (fb_w / 3), 400, C_BLUE);
-			puts_c("ios-zeus probe 1\n", C_YEL);
-			puts_c("bands: red green blue\n\n", C_WHITE);
-		}
-	}
-	kick();
-
-	uint64_t el, mpidr, sctlr;
-	__asm__ volatile("mrs %0, CurrentEL; mrs %1, mpidr_el1; mrs %2, sctlr_el1" : "=r"(el), "=r"(mpidr), "=r"(sctlr));
+	uint64_t el, mpidr, midr;
+	__asm__ volatile("mrs %0, CurrentEL; mrs %1, mpidr_el1; mrs %2, midr_el1" : "=r"(el), "=r"(mpidr), "=r"(midr));
 	line("EL     ", el >> 2, 1);
 	line("MPIDR  ", mpidr, 8);
-	line("SCTLR  ", sctlr, 8);
+	line("MIDR   ", midr, 8);
 	line("load   ", load, 10);
 	line("dtb    ", (uint64_t)dtb, 10);
-	line("dtbsz  ", be32(dtb + 4), 8);
-	line("cntfrq ", freq(), 8);
 	line("fb     ", (uint64_t)fb, 10);
-	line("fbsize ", fb_size, 8);
-	puts_c("sspp   ", C_GRAY);
-	puthex(found & 0xff, 2, C_WHITE);
-	puts_c(" ", 0); puthex(s_size, 8, C_WHITE);
-	puts_c(" ", 0); puthex(s_stride, 4, C_WHITE);
-	puts_c(" ", 0); puthex(s_fmt, 8, C_WHITE);
-	puts_c("\n", 0);
-
-	v = fdt_prop(dtb, "/memory", "reg", &l);
 	puts_c("memory (base size)\n", C_GRAY);
+	v = fdt_prop(dtb, "/memory", "reg", &l);
 	for (uint32_t i = 0; v && i + 16 <= l && i < 16 * 8; i += 16) {
 		puthex(be64(v + i), 10, C_WHITE);
 		puts_c(" ", 0);
 		puthex(be64(v + i + 8), 10, C_WHITE);
 		puts_c("\n", 0);
 	}
-	if (!v)
-		puts_c("  none\n", C_RED);
 
+	/* every pipe: who scans out what (explains the noise band at the top) */
+	static const uint32_t sspp_off[8] = { 0x5000, 0x7000, 0x9000, 0xb000, 0x25000, 0x27000, 0x29000, 0x2b000 };
+	puts_c("pipe addr srcsize outsize outxy strd fmt\n", C_GRAY);
+	for (int i = 0; i < 8; i++) {
+		uint64_t b = MDP_BASE + sspp_off[i];
+		putdec(i, C_GRAY); puts_c(" ", 0);
+		puthex(rd32(b + SSPP_SRC0_ADDR), 8, C_WHITE); puts_c(" ", 0);
+		puthex(rd32(b + SSPP_SRC_SIZE), 8, C_WHITE); puts_c(" ", 0);
+		puthex(rd32(b + SSPP_OUT_SIZE), 8, C_WHITE); puts_c(" ", 0);
+		puthex(rd32(b + SSPP_OUT_XY), 8, C_WHITE); puts_c(" ", 0);
+		puthex(rd32(b + SSPP_YSTRIDE0) & 0xffff, 4, C_WHITE); puts_c(" ", 0);
+		puthex(rd32(b + SSPP_FORMAT), 8, C_WHITE); puts_c("\n", 0);
+	}
 	dump_regs("CTL0 ", CTL0, 0x00, 12);
 	dump_regs("INTF1 ", INTF1, 0x280, 16);
-	dump_regs("PP0 ", PP0, 0x00, 16);
+	kick();
 
-	/* 3. keep sending frames for a minute so the panel shows them, then reset */
-	int tick_row = row + 1;
-	uint64_t start = now();
-	for (int t = 0; t < 240; t++) {
-		row = tick_row; col = 0;
-		puts_c("alive ", C_GRAY);
-		putdec((now() - start) / freq(), C_GREEN);
-		puts_c(" s, reset at 60  \n", C_GRAY);
-		kick();
-		delay_ms(250);
+	usb_start();
+	kick();
+
+	uint64_t start = now(), next_tick = 0, next_log = 10;
+	for (;;) {
+		usb_poll();
+		uint64_t t = (now() - start) * 1000 / freq();	/* ms */
+		if (t >= RUN_SECONDS * 1000)
+			break;
+		if (t >= next_tick) {
+			next_tick = t + 500;
+			int r = row, c = col;
+			log_on = 0;		/* the ticker is screen-only */
+			row = TICK_ROW; col = 0;
+			puts_c("alive ", C_GRAY);
+			putdec(t / 1000, C_GREEN);
+			puts_c(" s  usb ev ", C_GRAY);
+			putdec(usb_events(), C_WHITE);
+			puts_c(usb_configured() ? " LOG ON " : "        ", C_GREEN);
+			puts_c("reset at 120 ", C_GRAY);
+			row = r; col = c;
+			log_on = 1;
+			kick();
+		}
+		if (t / 1000 >= next_log) {
+			next_log += 10;
+			puts_c("t=", C_GRAY); putdec(t / 1000, C_WHITE);
+			puts_c(" usb events ", C_GRAY); putdec(usb_events(), C_WHITE);
+			puts_c(usb_configured() ? " configured\n" : "\n", C_WHITE);
+		}
 	}
+	puts_c("reset\n", C_YEL);
+	delay_ms(200);
 	psci_call(PSCI_SYSTEM_RESET, 0, 0, 0);
 	for (;;) ;
 }

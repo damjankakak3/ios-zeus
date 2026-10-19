@@ -11,8 +11,25 @@
   show without an MDP kick; vtimer is INTID 27 (not 19 as on sweet); touch is ST FTS over SPI.
 - **2026-10-19 PROBE 1 WORKS ON THE PHONE (user report):** `fastboot boot` of zeus-probe1.img shows the probe text and
   the red/green/blue strip at once. So ABL runs our Image, and the splash fb + CTL_0 kick reach the cmd-mode panel.
-  Register values / memory map / reset timing: waiting for the user's log + photo.
-- Probe stage 1 details: `shim/` (start.S, probe.c, probe.ld, build.sh; font from
+  Photo (IMG_0013) read: load 0xa8000000, DTB 0xb71fc000 (0xc81c4 bytes), CNTFRQ 19.2 MHz, fb 0xb8000000 size
+  0x2b00000, SSPP0 SRC0_ADDR in splash with SRC_SIZE 0x0c8002d0 (720x3200: ABL scans out two 720-wide halves),
+  stride 0x1680, format 0x000237ff. Live /memory: 0x80000000+0x6a000000, 0xf4600000+0xba00000,
+  0x800000000+0x37500000, 0x837b00000+0x1e00000, 0x840000000+0xc0000000, 0x900000000+0x180000000 (~11.7 GB).
+  CTL0 0x00 = 0x0100002d. INTF1 0x280.. contains 0xc80/0xc85/0xc81 (3200-line TE values) and 0x8000003c
+  (guess: autorefresh on). **Top ~420 lines of the screen show noise, not our text** (guess: another pipe/layer,
+  e.g. ABL's unlocked warning, scanned from a stale buffer) -> probe 2 dumps all 8 pipes.
+- **Probe 2 (built, QEMU-tested, NOT run on the phone yet):** `shim/usb.c` = CDC-ACM USB serial log (port of sweet
+  0073-0075 to bare metal: QSCRATCH VBUS override, DCTL soft reset, polled event buffer, ep0 state machine, ACM
+  descriptors, bulk IN 0x82 streams `logbuf`; resend from the start when the host raises DTR, so ModemManager
+  probing can't eat it). Reads GDSC 0x149004 first and skips USB if the power domain is off. Open risk: the USB
+  DMA goes through the SMMU (DT iommu-dma-addr-pool); works only if ABL's setup still lets DMA through.
+  Screen: text from row 9 (below the noise), 8-pipe table, CTL0/INTF1 dumps, USB register lines, ticker; reset 120 s.
+  `prebuilt/zeus-probe2.img` sha256 262335356c0f...
+- **Runner** `tools/zeus-probe.py` (default probe 2, `--probe 1` for the old one): no questions. One fastboot device
+  (or reboots the one adb device into fastboot), product zeus + unlocked yes, `fastboot boot`, then captures the
+  phone's ttyACM ("Zeus probe log", 1209:0001) to `logs/probe2-*-phone.txt` until the phone resets (sudo fallback
+  if the user lacks dialout/uucp), then waits for Android. Tested with fake fastboot/adb + a pty as the phone.
+- Probe stage 1 details (probe 1, `--probe 1`): `shim/` (start.S, probe.c, probe.ld, build.sh; font from
   sweet) -> `shim/out/zeus-probe1.img` (boot.img v4 from `tools/mkbootimg4.py`, kernel = probe Image, empty
   cpio; ABL adds the flashed vendor_boot + DTB). Prebuilt copy `prebuilt/zeus-probe1.img`, sha256
   a2c4b42ef122... (build is reproducible with Ubuntu clang 18).
@@ -23,10 +40,7 @@
   - Only writes: own RAM, splash fb, CTL_0 START. No storage code.
   - QEMU (virt, fake splash + fake SSPP regs in RAM): screen correct, SSPP found, reset after 61 s. At EL1 with the
     real MDP address (unmapped in QEMU): red EXCEPTION screen, ESR 0x96000050 FAR 0xae1601c, no fault loop.
-- **User runs:** `git pull` then `python3 tools/zeus-probe.py` (checks one fastboot device, product zeus, unlocked yes,
-  asks BOOT, `fastboot boot`, watches USB until Android is back, asks what the screen showed, writes
-  `logs/probe1-*.txt` with the serial masked). Allowlist: fastboot devices/getvar product/getvar unlocked/boot, adb
-  devices/reboot bootloader.
+- Runner allowlist: fastboot devices/getvar product/getvar unlocked/boot, adb devices/reboot bootloader.
 - Next after the result: if text shows -> stage 2 = USB device mode (DWC3 0xa600000) streaming the log to the PC
   (sweet 0072-0077 idea) so we get real logs instead of photos. If nothing shows: work out the cmd-mode frame
   trigger from the register dump / photo.
