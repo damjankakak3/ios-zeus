@@ -53,7 +53,12 @@
   prints it as the last job lines and puts it in the xnu-kernel artifact. Read it with get_job_logs tail.
   Run 39335734524 (0001 v2): **everything compiles**; only the final link of kernel.development.zeus fails
   (linker message not caught by the summary regex) -> summary now also prints 80 lines before each
-  'linker command failed'. Plan + source findings: `docs/xnu-plan.md` (VMAPPLE = no
+  'linker command failed'.
+  Run 39338815163: link fails with `ld: library .../KDK_26.5_25F71.kdk/System/Library/KernelSupport/
+  libZEUS.os.DEVELOPMENT.a not found`: xnu-12377's own MakeInc.def force_loads a closed lib<CONFIG>.os.<KCONF>.a
+  for every machine config (so blacktop's link_kdk.patch is "already upstream" and the stock VMAPPLE kernel DOES
+  contain closed code). 0001 v3 excludes ZEUS from it; CI now lists libVMAPPLE.os members/symbols (out/kdk-libs).
+  Also noted: kernel is built with -DXNU_TARGET_OS_OSX / PLATFORM MacOSX (sweet did the same and ran iOS userland). Plan + source findings: `docs/xnu-plan.md` (VMAPPLE = no
   PPL/SPTM, GICv3, paravirtual PAC hooks -> fixed standard PAC keys on zeus; drop SME; GICR stride 0x40000).
 - Probe 2 details: `shim/usb.c` = CDC-ACM USB serial log (port of sweet
   0073-0075 to bare metal: QSCRATCH VBUS override, DCTL soft reset, polled event buffer, ep0 state machine, ACM

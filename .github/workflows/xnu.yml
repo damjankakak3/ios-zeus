@@ -110,6 +110,21 @@ jobs:
           } > out/errors.txt
           cat out/errors.txt
 
+      - name: Closed KDK support libraries (what ZEUS has to replace)
+        if: always()
+        run: |
+          mkdir -p out/kdk-libs
+          for lib in /Library/Developer/KDKs/*/System/Library/KernelSupport/lib*.os.*.a; do
+            b=$(basename "$lib" .a)
+            case "$b" in libVMAPPLE.os.DEVELOPMENT|libVMAPPLE.os.RELEASE) ;; *) continue ;; esac
+            ar t "$lib" > "out/kdk-libs/$b.members.txt" 2>&1 || true
+            nm -m "$lib" > "out/kdk-libs/$b.nm.txt" 2>&1 || true
+            nm -gU "$lib" | awk 'NF==3{print $3}' | sort -u > "out/kdk-libs/$b.defined.txt" || true
+          done
+          ls /Library/Developer/KDKs/*/System/Library/KernelSupport/ | head -50
+          wc -l out/kdk-libs/* || true
+          cat out/kdk-libs/libVMAPPLE.os.DEVELOPMENT.members.txt || true
+
       - name: Collect
         if: always()
         run: |
