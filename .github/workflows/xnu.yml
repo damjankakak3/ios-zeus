@@ -101,6 +101,8 @@ jobs:
               | sed -E 's|.*/xnu/||' | sort | uniq -c | sort -rn | head -150
             echo "== linker"
             grep -E 'Undefined symbols|referenced from|^ *"_[A-Za-z0-9_]+"|ld: (error|symbol)|linker command failed' build.clean.log | sort | uniq -c | sort -rn | head -300
+            echo "== lines before each linker failure"
+            grep -B 80 'linker command failed' build.clean.log | grep -v -- '-Wreserved-identifier\|note: expanded from' | tail -160
             echo "== failed make targets"
             grep -oE 'make\[[0-9]+\]: \*\*\* \[[^]]+\] Error [0-9]+' build.clean.log | sort | uniq -c | head -100
             echo "== other errors"
