@@ -9,7 +9,10 @@
   instead. **Stock DT read: see `docs/zeus-hw.md`** (DTBs in `dtb/stock/`, not in git).
 - Key findings: panel is **command mode** (1440x3200 DSC, splash fb 0xb8000000) -> writing the fb may not
   show without an MDP kick; vtimer is INTID 27 (not 19 as on sweet); touch is ST FTS over SPI.
-- **Probe stage 1 is ready, NOT run on the phone yet.** `shim/` (start.S, probe.c, probe.ld, build.sh; font from
+- **2026-10-19 PROBE 1 WORKS ON THE PHONE (user report):** `fastboot boot` of zeus-probe1.img shows the probe text and
+  the red/green/blue strip at once. So ABL runs our Image, and the splash fb + CTL_0 kick reach the cmd-mode panel.
+  Register values / memory map / reset timing: waiting for the user's log + photo.
+- Probe stage 1 details: `shim/` (start.S, probe.c, probe.ld, build.sh; font from
   sweet) -> `shim/out/zeus-probe1.img` (boot.img v4 from `tools/mkbootimg4.py`, kernel = probe Image, empty
   cpio; ABL adds the flashed vendor_boot + DTB). Prebuilt copy `prebuilt/zeus-probe1.img`, sha256
   a2c4b42ef122... (build is reproducible with Ubuntu clang 18).
