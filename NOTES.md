@@ -46,7 +46,11 @@
   ZEUS run 39327608114 (0001 v1): 253 compile errors, all `CPMU_PMC_COUNT` undeclared (Apple configs get it from a
   private SDK platform header) -> 0001 v2 defines it as 10 in ZEUS.h. Also seen: blacktop's link_kdk.patch and
   remove_applefeatures_include.patch are SKIPPED (do not apply to 12377.121.6) even in the passing VMAPPLE run, so
-  that stock kernel linked without the closed KDK library. Full logs: get_workflow_run_logs_url + curl (191 MB zip). Plan + source findings: `docs/xnu-plan.md` (VMAPPLE = no
+  that stock kernel linked without the closed KDK library. Full logs: get_workflow_run_logs_url + curl (191 MB zip;
+  the signed URL works once and the download through this sandbox's proxy often breaks off).
+  Run 39332084864 (0001 v2): failed, no compile error found in the recoverable 436 MB of log -> CI now tees the build
+  output and an "Error summary" step writes out/errors.txt (compiler errors, undefined symbols, failed make targets),
+  prints it as the last job lines and puts it in the xnu-kernel artifact. Read it with get_job_logs tail. Plan + source findings: `docs/xnu-plan.md` (VMAPPLE = no
   PPL/SPTM, GICv3, paravirtual PAC hooks -> fixed standard PAC keys on zeus; drop SME; GICR stride 0x40000).
 - Probe 2 details: `shim/usb.c` = CDC-ACM USB serial log (port of sweet
   0073-0075 to bare metal: QSCRATCH VBUS override, DCTL soft reset, polled event buffer, ep0 state machine, ACM

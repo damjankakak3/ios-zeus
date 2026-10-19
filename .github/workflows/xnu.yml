@@ -85,7 +85,28 @@ jobs:
         working-directory: dxb
         env:
           MAKEFLAGS: ${{ inputs.keep_going == 'false' && '' || '-k' }}
-        run: bash build.sh
+        run: |
+          set -o pipefail
+          bash build.sh 2>&1 | tee ../build.log
+
+      - name: Error summary
+        if: always()
+        run: |
+          mkdir -p out
+          # compact view of a 400 MB log: compiler errors, undefined symbols, failed make targets
+          sed 's/\x1b\[[0-9;]*m//g' build.log > build.clean.log || true
+          {
+            echo "== compiler errors (count, file:line: message)"
+            grep -oE '[A-Za-z0-9_/.+-]+\.(c|cpp|h|s|S|hpp|iig|defs):[0-9]+:[0-9]+: (fatal )?error: .{0,200}' build.clean.log \
+              | sed -E 's|.*/xnu/||' | sort | uniq -c | sort -rn | head -150
+            echo "== linker"
+            grep -E 'Undefined symbols|referenced from|^ *"_[A-Za-z0-9_]+"|ld: (error|symbol)|linker command failed' build.clean.log | sort | uniq -c | sort -rn | head -300
+            echo "== failed make targets"
+            grep -oE 'make\[[0-9]+\]: \*\*\* \[[^]]+\] Error [0-9]+' build.clean.log | sort | uniq -c | head -100
+            echo "== other errors"
+            grep -E '^\S+ (error|ERROR|Error):|##\[error\]|\[error\]' build.clean.log | head -50
+          } > out/errors.txt
+          cat out/errors.txt
 
       - name: Collect
         if: always()
