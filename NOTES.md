@@ -39,7 +39,10 @@
 - **XNU started (2026-10-19):** repo is public (free macOS runners). `.github/workflows/xnu.yml` builds
   xnu-12377.121.6 (macOS 26.5) via blacktop/darwin-xnu-build 6639065; first CI run 39316275160 = stock VMAPPLE
   DEVELOPMENT: never got a macOS runner (runner_id 0), cancelled after 15 min in the queue. Re-dispatched as run
-  39321757281 (workflow_dispatch on ios-27, same inputs). Plan + source findings: `docs/xnu-plan.md` (VMAPPLE = no
+  39321757281: **SUCCESS** (stock VMAPPLE DEVELOPMENT kernel, build step 14 min, artifact xnu-kernel 12221482445,
+  76 MB). Patch 0001 = ZEUS machine config (VMAPPLE.h copy without SME, -march=armv8.5a, MAX_CPUS 8; no closed
+  KDK lib linked: blacktop's link_kdk.patch only links lib<cfg>.os for T6000/T6020/T8101/T8103/T8112/VMAPPLE ->
+  expect undefined symbols at link = what we must write). Workflow default MACHINE_CONFIG is now ZEUS. Plan + source findings: `docs/xnu-plan.md` (VMAPPLE = no
   PPL/SPTM, GICv3, paravirtual PAC hooks -> fixed standard PAC keys on zeus; drop SME; GICR stride 0x40000).
 - Probe 2 details: `shim/usb.c` = CDC-ACM USB serial log (port of sweet
   0073-0075 to bare metal: QSCRATCH VBUS override, DCTL soft reset, polled event buffer, ep0 state machine, ACM

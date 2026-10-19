@@ -11,8 +11,8 @@ on:
         description: RELEASE / DEVELOPMENT / DEBUG
         default: DEVELOPMENT
       machine_config:
-        description: xnu MACHINE_CONFIG (VMAPPLE = stock check; ZEUS once it exists)
-        default: VMAPPLE
+        description: xnu MACHINE_CONFIG (ZEUS; VMAPPLE = stock comparison build)
+        default: ZEUS
       keep_going:
         description: make -k (collect all compile errors in one run)
         default: "true"
@@ -32,7 +32,7 @@ env:
   MACOS_VERSION: "26.5"
   XNU_TAG: xnu-12377.121.6
   KERNEL_CONFIG: ${{ inputs.kernel_config || 'DEVELOPMENT' }}
-  MACHINE_CONFIG: ${{ inputs.machine_config || 'VMAPPLE' }}
+  MACHINE_CONFIG: ${{ inputs.machine_config || 'ZEUS' }}
 
 jobs:
   build:
