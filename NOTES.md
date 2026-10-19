@@ -38,7 +38,8 @@
   changed and a sample of the new data. QEMU: no false positives over 30 s. Runner default is now probe 3.
 - **XNU started (2026-10-19):** repo is public (free macOS runners). `.github/workflows/xnu.yml` builds
   xnu-12377.121.6 (macOS 26.5) via blacktop/darwin-xnu-build 6639065; first CI run 39316275160 = stock VMAPPLE
-  DEVELOPMENT (pipeline check; result pending). Plan + source findings: `docs/xnu-plan.md` (VMAPPLE = no
+  DEVELOPMENT: never got a macOS runner (runner_id 0), cancelled after 15 min in the queue. Re-dispatched as run
+  39321757281 (workflow_dispatch on ios-27, same inputs). Plan + source findings: `docs/xnu-plan.md` (VMAPPLE = no
   PPL/SPTM, GICv3, paravirtual PAC hooks -> fixed standard PAC keys on zeus; drop SME; GICR stride 0x40000).
 - Probe 2 details: `shim/usb.c` = CDC-ACM USB serial log (port of sweet
   0073-0075 to bare metal: QSCRATCH VBUS override, DCTL soft reset, polled event buffer, ep0 state machine, ACM
