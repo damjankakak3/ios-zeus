@@ -29,6 +29,10 @@
   32 MB RAM test at 0xb0000000 (A = flushed first, B = not), pattern-checked every 5 s; framebuffer hashed in 32
   bands of 100 lines every 5 s (ticker band skipped, snapshot after our own printing) -> USB log says which bands
   changed and a sample of the new data. QEMU: no false positives over 30 s. Runner default is now probe 3.
+- **XNU started (2026-10-19):** repo is public (free macOS runners). `.github/workflows/xnu.yml` builds
+  xnu-12377.121.6 (macOS 26.5) via blacktop/darwin-xnu-build 6639065; first CI run 39316275160 = stock VMAPPLE
+  DEVELOPMENT (pipeline check; result pending). Plan + source findings: `docs/xnu-plan.md` (VMAPPLE = no
+  PPL/SPTM, GICv3, paravirtual PAC hooks -> fixed standard PAC keys on zeus; drop SME; GICR stride 0x40000).
 - Probe 2 details: `shim/usb.c` = CDC-ACM USB serial log (port of sweet
   0073-0075 to bare metal: QSCRATCH VBUS override, DCTL soft reset, polled event buffer, ep0 state machine, ACM
   descriptors, bulk IN 0x82 streams `logbuf`; resend from the start when the host raises DTR, so ModemManager
