@@ -10,3 +10,5 @@ research/
 out/
 */out/
 __pycache__/
+# runner logs (upload them instead)
+logs/

@@ -9,10 +9,24 @@
   instead. **Stock DT read: see `docs/zeus-hw.md`** (DTBs in `dtb/stock/`, not in git).
 - Key findings: panel is **command mode** (1440x3200 DSC, splash fb 0xb8000000) -> writing the fb may not
   show without an MDP kick; vtimer is INTID 27 (not 19 as on sweet); touch is ST FTS over SPI.
-- **Nothing has been run on the phone.**
-- Next: shim stage 1 = `fastboot boot` an image that paints the splash framebuffer, then sends the frame
-  (try autorefresh/CTL start if a plain write doesn't show), shows the live DT memory and load address,
-  and resets. That checks the boot path and whether the display works without the user flashing anything.
+- **Probe stage 1 is ready, NOT run on the phone yet.** `shim/` (start.S, probe.c, probe.ld, build.sh; font from
+  sweet) -> `shim/out/zeus-probe1.img` (boot.img v4 from `tools/mkbootimg4.py`, kernel = probe Image, empty
+  cpio; ABL adds the flashed vendor_boot + DTB). Prebuilt copy `prebuilt/zeus-probe1.img`, sha256
+  a2c4b42ef122... (build is reproducible with Ubuntu clang 18).
+  - Does: draw on the splash fb (DT `splash_region`, default 1440x3200 stride 5760), CTL_0 START kick (0xae1601c),
+    find the SSPP whose SRC0_ADDR is inside the splash region and redraw with its size/stride, print EL, MPIDR,
+    load/DTB address, live /memory, SSPP, CTL0/INTF1/PP0 register dumps, kick every 250 ms, PSCI SYSTEM_RESET at 60 s.
+    Any exception: red screen with ESR/ELR/FAR, one guarded kick, reset after 30 s.
+  - Only writes: own RAM, splash fb, CTL_0 START. No storage code.
+  - QEMU (virt, fake splash + fake SSPP regs in RAM): screen correct, SSPP found, reset after 61 s. At EL1 with the
+    real MDP address (unmapped in QEMU): red EXCEPTION screen, ESR 0x96000050 FAR 0xae1601c, no fault loop.
+- **User runs:** `git pull` then `python3 tools/zeus-probe.py` (checks one fastboot device, product zeus, unlocked yes,
+  asks BOOT, `fastboot boot`, watches USB until Android is back, asks what the screen showed, writes
+  `logs/probe1-*.txt` with the serial masked). Allowlist: fastboot devices/getvar product/getvar unlocked/boot, adb
+  devices/reboot bootloader.
+- Next after the result: if text shows -> stage 2 = USB device mode (DWC3 0xa600000) streaming the log to the PC
+  (sweet 0072-0077 idea) so we get real logs instead of photos. If nothing shows: work out the cmd-mode frame
+  trigger from the register dump / photo.
 
 ## Facts (checked 2026-10-19)
 

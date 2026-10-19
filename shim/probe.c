@@ -115,6 +115,15 @@ static void puthex(uint64_t v, int digits, uint32_t fg)
 	puts_c(b, fg);
 }
 
+static void putdec(uint64_t v, uint32_t fg)
+{
+	char b[21];
+	int i = 20;
+	b[i] = 0;
+	do { b[--i] = '0' + v % 10; v /= 10; } while (v);
+	puts_c(b + i, fg);
+}
+
 static void line(const char *label, uint64_t v, int digits)
 {
 	puts_c(label, C_GRAY);
@@ -196,8 +205,15 @@ static const uint8_t *fdt_prop(const uint8_t *dtb, const char *path, const char 
 
 /* ---------- probe ---------- */
 
+static void kick(void)
+{
+	mdp_write(CTL0 + CTL_START, 1);
+}
+
 void probe_exception(uint64_t slot)
 {
+	static int nested;
+
 	uint64_t esr, elr, far;
 	__asm__ volatile("mrs %0, esr_el1; mrs %1, elr_el1; mrs %2, far_el1" : "=r"(esr), "=r"(elr), "=r"(far));
 	rect(0, 0, fb_w, 12 * CH, C_RED);
@@ -208,14 +224,11 @@ void probe_exception(uint64_t slot)
 	line("ELR  ", elr, 16);
 	line("FAR  ", far, 16);
 	puts_c("reset in 30 s\n", C_WHITE);
+	if (!nested++)	/* a fault inside kick() comes back here with nested set */
+		kick();
 	delay_ms(30000);
 	psci_call(PSCI_SYSTEM_RESET, 0, 0, 0);
 	for (;;) ;
-}
-
-static void kick(void)
-{
-	mdp_write(CTL0 + CTL_START, 1);
 }
 
 static void dump_regs(const char *label, uint64_t base, uint32_t from, int n)
@@ -244,6 +257,7 @@ void probe_main(const uint8_t *dtb, uint64_t load)
 	rect(2 * fb_w / 3, fb_h - 400, fb_w - 2 * (fb_w / 3), 400, C_BLUE);
 	puts_c("ios-zeus probe 1\n", C_YEL);
 	puts_c("bands: red green blue\n\n", C_WHITE);
+	kick();
 
 	/* 2. find the pipe ABL scans out from; trust its geometry */
 	static const uint32_t sspp_off[8] = { 0x5000, 0x7000, 0x9000, 0xb000, 0x25000, 0x27000, 0x29000, 0x2b000 };
@@ -317,8 +331,8 @@ void probe_main(const uint8_t *dtb, uint64_t load)
 	for (int t = 0; t < 240; t++) {
 		row = tick_row; col = 0;
 		puts_c("alive ", C_GRAY);
-		puthex((now() - start) / freq(), 4, C_GREEN);
-		puts_c(" s, reset at 003c\n", C_GRAY);
+		putdec((now() - start) / freq(), C_GREEN);
+		puts_c(" s, reset at 60  \n", C_GRAY);
 		kick();
 		delay_ms(250);
 	}
