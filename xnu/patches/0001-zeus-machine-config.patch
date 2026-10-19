@@ -36,10 +36,10 @@ index 75938b5..9a80c67 100644
  # Headers installed into System.framework/PrivateHeaders (userspace internal SDK only).
 diff --git a/pexpert/pexpert/arm64/ZEUS.h b/pexpert/pexpert/arm64/ZEUS.h
 new file mode 100644
-index 0000000..1be73dc
+index 0000000..f80a813
 --- /dev/null
 +++ b/pexpert/pexpert/arm64/ZEUS.h
-@@ -0,0 +1,95 @@
+@@ -0,0 +1,101 @@
 +/*
 + * Copyright (c) 2019 Apple Inc. All rights reserved.
 + *
@@ -77,6 +77,12 @@ index 0000000..1be73dc
 + * timebase, CTRR) are still VMAPPLE's and get replaced in later patches.
 + */
 +#define ZEUS                      1
++
++/* Apple CPMU counter count; Apple's configs get it from a private SDK
++ * platform header. Same as Apple cores so the cpc/kpc code compiles; the
++ * Apple PMU registers do not exist on Cortex and must not be touched at
++ * run time (later patch). */
++#define CPMU_PMC_COUNT            10
 +#define NO_MONITOR                1
 +#define NO_ECORE                  1
 +#define HAS_PARAVIRTUALIZED_CTRR  1
