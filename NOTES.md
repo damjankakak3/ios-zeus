@@ -58,6 +58,13 @@
   libZEUS.os.DEVELOPMENT.a not found`: xnu-12377's own MakeInc.def force_loads a closed lib<CONFIG>.os.<KCONF>.a
   for every machine config (so blacktop's link_kdk.patch is "already upstream" and the stock VMAPPLE kernel DOES
   contain closed code). 0001 v3 excludes ZEUS from it; CI now lists libVMAPPLE.os members/symbols (out/kdk-libs).
+  Run 39341366443 (0001 v3): link fails on hundreds of undefined pmap_*/machine_*/cache/locore symbols.
+  **libVMAPPLE.os.DEVELOPMENT.a (closed, KDK) = the arm64 core**: caches_asm pinst cswitch pmap pmap_cs pmap_data
+  pmap_iommu pmap_misc pmap_ppl_interface pcb locore gxf_exceptions machine_routines_asm machine_routines_apple
+  machine_routines_nos amcc_rorgn_* start sptm_stubs sart dart nvmeppl uat IOUnifiedAddressTranslator.
+  The SOURCE is in the public tree, gated by options nos_arm_asm / nos_arm_pmap (osfmk/conf/files.arm64), which
+  Apple's configs leave off. 0001 v4 adds config/MASTER.arm64.zeus.MacOSX (doconf picks MASTER.<cpu>.<soc>.<platform>
+  first) = MacOSX config + `nos_arm_asm nos_arm_pmap` in ARM_EXTRAS_BASE, CPU_COUNTERS_BASE empty (no Apple CPMU).
   Also noted: kernel is built with -DXNU_TARGET_OS_OSX / PLATFORM MacOSX (sweet did the same and ran iOS userland). Plan + source findings: `docs/xnu-plan.md` (VMAPPLE = no
   PPL/SPTM, GICv3, paravirtual PAC hooks -> fixed standard PAC keys on zeus; drop SME; GICR stride 0x40000).
 - Probe 2 details: `shim/usb.c` = CDC-ACM USB serial log (port of sweet
