@@ -1,0 +1,12 @@
+# device data: partition dumps, live DT and recon output may hold serials / IMEI
+backup/
+dtb/
+recon/*
+!recon/.gitkeep
+# Apple and third-party downloads (IPSW, shared cache, KDK, xnu checkout)
+apple/
+research/
+# build output
+out/
+*/out/
+__pycache__/
