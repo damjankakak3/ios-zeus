@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build the zeus probe (stage 2) into out/zeus-probe2.img. Needs clang + ld.lld.
+# Build the zeus probe (stage 3) into out/zeus-probe3.img. Needs clang + ld.lld.
 set -euo pipefail
 cd "$(dirname "$0")"
 CC="clang --target=aarch64-none-elf"
@@ -18,5 +18,5 @@ llvm-objcopy -O binary out/probe.elf out/Image
 # ABL copies the file; pad to image_size so .bss and the stack exist.
 size=$((16#$(llvm-nm out/probe.elf | awk '$3=="_end"{print $1}')))
 truncate -s "$size" out/Image
-python3 ../tools/mkbootimg4.py out/Image out/zeus-probe2.img
-sha256sum out/zeus-probe2.img
+python3 ../tools/mkbootimg4.py out/Image out/zeus-probe3.img
+sha256sum out/zeus-probe3.img

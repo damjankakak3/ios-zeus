@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """ios-zeus probe runner: boot the probe on zeus and capture its log. No questions.
 
-  python3 tools/zeus-probe.py [--probe 1|2]     (from the repo root, after git pull)
+  python3 tools/zeus-probe.py [--probe 1|2|3]     (from the repo root, after git pull)
 
-  1. Builds shim/out/zeus-probe2.img if clang + ld.lld exist, else uses prebuilt/.
+  1. Builds shim/out/zeus-probe3.img if clang + ld.lld exist, else uses prebuilt/.
   2. Finds the phone: exactly one fastboot device, or one adb device which it
      reboots into fastboot. Stops unless product = zeus and unlocked = yes.
   3. `fastboot boot` (RAM only, nothing is flashed).
-  4. Probe 2: waits for the phone's USB serial port ("Zeus probe log",
+  4. Probe 2+: waits for the phone's USB serial port ("Zeus probe log",
      1209:0001) and saves everything the phone sends until it resets.
   5. Watches until Android is back (adb) or 5 minutes pass.
 
@@ -19,6 +19,7 @@ Safety: the only phone commands this script can run are listed in ALLOWED.
 import argparse, datetime, glob, hashlib, os, re, shutil, subprocess, sys, termios, time, tty
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+LATEST = 3	# shim/ builds this probe; older ones run from prebuilt/
 
 # argv patterns this script may send to the phone (None = any). Nothing that writes flash.
 ALLOWED = [
@@ -99,7 +100,7 @@ def get_image():
     built = os.path.join(ROOT, "shim", "out", name)
     prebuilt = os.path.join(ROOT, "prebuilt", name)
     img = prebuilt
-    if ARGS.probe == 2 and all(shutil.which(t) for t in ("clang", "ld.lld", "llvm-objcopy", "llvm-nm")):
+    if ARGS.probe == LATEST and all(shutil.which(t) for t in ("clang", "ld.lld", "llvm-objcopy", "llvm-nm")):
         r = subprocess.run(["bash", os.path.join(ROOT, "shim", "build.sh")], capture_output=True, text=True)
         log("built locally" if r.returncode == 0 else "local build failed, using prebuilt: " + r.stderr.strip()[-300:])
         if r.returncode == 0:
@@ -223,7 +224,7 @@ def main():
         finish(1, "fastboot boot failed (see above). Nothing was changed on the phone")
     log("probe is running on the phone (resets by itself after ~120 s)")
 
-    if ARGS.probe == 2:
+    if ARGS.probe >= 2:
         capture_serial(t_boot + 130, t_boot + 200)
 
     log("waiting for Android (adb) or 5 minutes")
@@ -241,7 +242,7 @@ def main():
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--probe", type=int, choices=(1, 2), default=2)
+    ap.add_argument("--probe", type=int, choices=(1, 2, 3), default=3)
     ARGS = ap.parse_args()
     PHONE_LOG = os.path.join(ROOT, "logs", f"probe{ARGS.probe}-{STAMP}-phone.txt")
     os.makedirs(os.path.join(ROOT, "logs"), exist_ok=True)

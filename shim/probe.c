@@ -1,9 +1,11 @@
 /*
- * zeus probe 2: everything probe 1 showed, a dump of all display pipes,
- * and the log streamed over USB as a serial port (usb.c).
+ * zeus probe 3: probe 2 (screen + USB serial log, usb.c) plus a memory
+ * watch for the noise that grows over the screen: is the framebuffer RAM
+ * itself being overwritten, and do stale cache lines from ABL do it?
  *
  * Safety: no storage code. Memory writes: own image/stack/buffers and the
- * ABL splash framebuffer. Register writes (all via wr32): CTL_0 START of
+ * ABL splash framebuffer, and a 32 MB test area at MEMTEST_BASE (free RAM
+ * between our image and the DTB ABL passed). Register writes (all via wr32): CTL_0 START of
  * the display controller, and the USB controller + its Qualcomm wrapper
  * (usb.c). Ends with PSCI SYSTEM_RESET after 120 s; Android boots again.
  *
@@ -18,6 +20,12 @@ int usb_configured(void);
 
 #define PSCI_SYSTEM_RESET	0x84000009UL
 #define RUN_SECONDS		120
+
+/* Two 16 MB test areas: A is cleaned+invalidated from the caches before the
+ * pattern is written, B is not. Inside /memory, below the DTB (0xb71fc000
+ * on zeus), not in any static reserved region. */
+#define MEMTEST_BASE	0xb0000000UL
+#define MEMTEST_HALF	0x01000000UL
 
 /* Display controller (stock DT: mdp_phys 0xae00000, offsets from it) */
 #ifndef MDP_BASE
@@ -218,6 +226,115 @@ static const uint8_t *fdt_prop(const uint8_t *dtb, const char *path, const char 
 	}
 }
 
+
+/* ---------- caches and memory watch ---------- */
+
+/* DC CIVAC by address works with the MMU off too: write back and drop any
+ * lines ABL left in the caches for [base, base+size). */
+static void cache_flush(uint64_t base, uint64_t size)
+{
+	uint64_t ctr;
+	__asm__ volatile("mrs %0, ctr_el0" : "=r"(ctr));
+	uint64_t line = 4UL << ((ctr >> 16) & 0xf);
+	for (uint64_t a = base & ~(line - 1); a < base + size; a += line)
+		__asm__ volatile("dc civac, %0" :: "r"(a) : "memory");
+	__asm__ volatile("dsb sy" ::: "memory");
+}
+
+static inline uint32_t pattern(uint64_t a) { return (uint32_t)(a >> 2) ^ 0xa5a5a5a5U; }
+
+static void mem_fill(uint64_t base, uint64_t size)
+{
+	for (uint64_t a = base; a < base + size; a += 4)
+		*(volatile uint32_t *)a = pattern(a);
+}
+
+/* mismatching words in [base, base+size); first bad address and value */
+static uint64_t mem_check(uint64_t base, uint64_t size, uint64_t *first, uint32_t *val)
+{
+	uint64_t bad = 0;
+	for (uint64_t a = base; a < base + size; a += 4) {
+		uint32_t v = *(volatile uint32_t *)a;
+		if (v != pattern(a)) {
+			if (!bad++) { *first = a; *val = v; }
+		}
+	}
+	return bad;
+}
+
+#define BANDS	32		/* 100 lines each */
+static uint32_t band_sum[BANDS];
+
+static uint32_t band_hash(int b)
+{
+	uint32_t h = 0;
+	uint64_t lines = fb_h / BANDS;
+	volatile uint32_t *p = (volatile uint32_t *)(fb + b * lines * fb_stride);
+	for (uint64_t i = 0; i < lines * fb_stride / 4; i += 4)	/* every 4th word */
+		h = (h << 5 | h >> 27) ^ p[i];
+	return h;
+}
+
+static void bands_snapshot(void)
+{
+	for (int b = 0; b < BANDS; b++)
+		band_sum[b] = band_hash(b);
+}
+
+/* Log which 100-line bands changed since the last snapshot. */
+static void bands_report(void)
+{
+	static uint8_t changed[BANDS];
+	int first = -1, n = 0;
+	for (int b = 0; b < BANDS; b++) {	/* hash everything before printing anything */
+		uint32_t h = band_hash(b);
+		uint32_t y0 = b * (fb_h / BANDS), ty = MARGIN + TICK_ROW * CH;
+		changed[b] = h != band_sum[b] && !(y0 + fb_h / BANDS > ty && y0 < ty + CH);
+		if (changed[b]) {
+			if (first < 0) first = b;
+			n++;
+		}
+	}
+	uint32_t sample[4] = { 0 };
+	uint64_t a = (uint64_t)fb + (first < 0 ? 0 : first) * (fb_h / BANDS) * fb_stride;
+	for (int i = 0; i < 4; i++)
+		sample[i] = *(volatile uint32_t *)(a + 4 * i);
+	puts_c("fb bands changed:", C_GRAY);
+	for (int b = 0; b < BANDS; b++)
+		if (changed[b]) {
+			puts_c(" ", 0);
+			putdec(b, C_WHITE);
+		}
+	puts_c(n ? "\n" : " none\n", n ? C_WHITE : C_GREEN);
+	if (first >= 0) {
+		puts_c("  band ", C_GRAY); putdec(first, C_WHITE);
+		puts_c(" @", C_GRAY); puthex(a, 10, C_WHITE);
+		puts_c(":", C_GRAY);
+		for (int i = 0; i < 4; i++) {
+			puts_c(" ", 0);
+			puthex(sample[i], 8, C_WHITE);
+		}
+		puts_c("\n", 0);
+	}
+}
+
+static void mem_report(void)
+{
+	for (int k = 0; k < 2; k++) {
+		uint64_t first = 0;
+		uint32_t val = 0;
+		uint64_t base = MEMTEST_BASE + k * MEMTEST_HALF;
+		uint64_t bad = mem_check(base, MEMTEST_HALF, &first, &val);
+		puts_c(k ? "  memB(no flush) bad " : "  memA(flushed) bad ", C_GRAY);
+		putdec(bad, bad ? C_RED : C_GREEN);
+		if (bad) {
+			puts_c(" first ", C_GRAY); puthex(first, 10, C_WHITE);
+			puts_c("=", C_GRAY); puthex(val, 8, C_WHITE);
+		}
+		puts_c("\n", 0);
+	}
+}
+
 /* ---------- probe ---------- */
 
 void probe_exception(uint64_t slot)
@@ -261,9 +378,10 @@ void probe_main(const uint8_t *dtb, uint64_t load)
 		fb = (volatile uint8_t *)be64(v);
 		fb_size = be64(v + 8);
 	}
+	cache_flush((uint64_t)fb, fb_size);	/* drop ABL's cache lines first */
 	rect(0, 0, fb_w, fb_h, C_BG);
 	bands();
-	puts_c("ios-zeus probe 2\n", C_YEL);
+	puts_c("ios-zeus probe 3\n", C_YEL);
 	kick();
 
 	uint64_t el, mpidr, midr;
@@ -303,7 +421,15 @@ void probe_main(const uint8_t *dtb, uint64_t load)
 	usb_start();
 	kick();
 
-	uint64_t start = now(), next_tick = 0, next_log = 10;
+	cache_flush(MEMTEST_BASE, MEMTEST_HALF);
+	mem_fill(MEMTEST_BASE, 2 * MEMTEST_HALF);
+	puts_c("memtest A ", C_GRAY); puthex(MEMTEST_BASE, 10, C_WHITE);
+	puts_c(" B ", C_GRAY); puthex(MEMTEST_BASE + MEMTEST_HALF, 10, C_WHITE);
+	puts_c(" 16M each, fb flushed\n", C_GRAY);
+	mem_report();
+	bands_snapshot();
+
+	uint64_t start = now(), next_tick = 0, next_watch = 5;
 	for (;;) {
 		usb_poll();
 		uint64_t t = (now() - start) * 1000 / freq();	/* ms */
@@ -324,11 +450,14 @@ void probe_main(const uint8_t *dtb, uint64_t load)
 			log_on = 1;
 			kick();
 		}
-		if (t / 1000 >= next_log) {
-			next_log += 10;
+		if (t / 1000 >= next_watch) {
+			next_watch += 5;
+			bands_report();		/* changes since the last snapshot */
+			mem_report();
 			puts_c("t=", C_GRAY); putdec(t / 1000, C_WHITE);
 			puts_c(" usb events ", C_GRAY); putdec(usb_events(), C_WHITE);
 			puts_c(usb_configured() ? " configured\n" : "\n", C_WHITE);
+			bands_snapshot();	/* after our own printing */
 		}
 	}
 	puts_c("reset\n", C_YEL);

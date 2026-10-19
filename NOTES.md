@@ -18,7 +18,18 @@
   CTL0 0x00 = 0x0100002d. INTF1 0x280.. contains 0xc80/0xc85/0xc81 (3200-line TE values) and 0x8000003c
   (guess: autorefresh on). **Top ~420 lines of the screen show noise, not our text** (guess: another pipe/layer,
   e.g. ABL's unlocked warning, scanned from a stale buffer) -> probe 2 dumps all 8 pipes.
-- **Probe 2 (built, QEMU-tested, NOT run on the phone yet):** `shim/usb.c` = CDC-ACM USB serial log (port of sweet
+- **2026-10-19 PROBE 2 ON THE PHONE: USB SERIAL LOG WORKS** (user photo + runner log). GDSC 0xf822f000 (on),
+  GSNPSID 0x33313130 (DWC_usb31 1.30a), GCTL 0x00102001, DCTL 0x10f00000, DSTS 0x00d32f04 before; QS HSPHY 0;
+  after run DSTS 0x00820001; "connected, speed 0" (high speed) twice, configured, LOG ON; host got /dev/ttyACM0
+  3.9 s after `fastboot boot`. So USB DMA works through the SMMU as ABL left it. Phone log file: not uploaded yet.
+  **The noise band grows**: ~420 lines at t=0 (probe 1), ~half the screen at t=20 s (probe 2). Something overwrites
+  the framebuffer RAM (or the display shows something else) over time. Candidates: stale dirty cache lines from ABL
+  written back over our uncached writes; another agent (VM/DSP) using that RAM; a display-side effect.
+- **Probe 3 (built, QEMU-tested, NOT run yet):** probe 2 + DC CIVAC over the whole splash region before drawing;
+  32 MB RAM test at 0xb0000000 (A = flushed first, B = not), pattern-checked every 5 s; framebuffer hashed in 32
+  bands of 100 lines every 5 s (ticker band skipped, snapshot after our own printing) -> USB log says which bands
+  changed and a sample of the new data. QEMU: no false positives over 30 s. Runner default is now probe 3.
+- Probe 2 details: `shim/usb.c` = CDC-ACM USB serial log (port of sweet
   0073-0075 to bare metal: QSCRATCH VBUS override, DCTL soft reset, polled event buffer, ep0 state machine, ACM
   descriptors, bulk IN 0x82 streams `logbuf`; resend from the start when the host raises DTR, so ModemManager
   probing can't eat it). Reads GDSC 0x149004 first and skips USB if the power domain is off. Open risk: the USB
