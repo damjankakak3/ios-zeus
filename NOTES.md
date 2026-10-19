@@ -3,10 +3,16 @@
 ## Handoff (2026-10-19)
 
 - Goal: iOS 26 (iPhone 11 build, N104AP) on zeus, booted with `fastboot boot`, root from ramdisk/USB.
-- State: clean repo skeleton only. **Nothing has been run on the phone.**
-- Next: user runs `docs/local-agent-prompt.md` with the local agent -> `recon/zeus-recon.md`
-  (device, bootloader unlocked?, slot, `max-download-size`, build). Then get the DTB from
-  `vendor_boot.img` of the matching stock firmware.
+- Phone (from the user): zeus 12/256 GB EEA, **bootloader unlocked**, HyperOS EEA (build: assume
+  OS3.0.3.0.VLBEUXM, the newest EEA, unless the user says otherwise).
+- The local agent gave nothing useful; the user ran `tools/zeus-dt-extract.py` on their fastboot ROM zip
+  instead. **Stock DT read: see `docs/zeus-hw.md`** (DTBs in `dtb/stock/`, not in git).
+- Key findings: panel is **command mode** (1440x3200 DSC, splash fb 0xb8000000) -> writing the fb may not
+  show without an MDP kick; vtimer is INTID 27 (not 19 as on sweet); touch is ST FTS over SPI.
+- **Nothing has been run on the phone.**
+- Next: shim stage 1 = `fastboot boot` an image that paints the splash framebuffer, then sends the frame
+  (try autorefresh/CTL start if a plain write doesn't show), shows the live DT memory and load address,
+  and resets. That checks the boot path and whether the display works without the user flashing anything.
 
 ## Facts (checked 2026-10-19)
 
@@ -16,7 +22,7 @@
 
 ## Hardware facts (zeus)
 
-(empty - fill from recon and the DTB; mark each one measured or from DT)
+From the stock DT, not measured yet: `docs/zeus-hw.md`.
 
 ## Lessons from sweet worth reusing (ideas, re-implement cleanly)
 
