@@ -101,6 +101,9 @@
   coherent" (CleanPoU no-op, dc civac for PoC). Guess: fine for CPU-only code on SM8450; non-coherent DMA
   (USB) must do its own cache maintenance in our drivers. PV ticket locks: only built for virtualized SoCs.
   research/xnu now has a local commit ffdc90a = 0001; 0002 is `git diff` against it.
+  **Run 39366356838 (cb29ee6, 0001+0002): SUCCESS.** kernel.development.zeus 22283528 bytes, sha256
+  6eea31abc4e1207e2d3bfa6da08858e4d70258326db099f6bc93aeed12fb6ec9, artifact id 12239564715.
+  Not run on hardware. Next: loader (design in docs/xnu-plan.md "Loader design"), then 0003 USB console.
   RUNTIME TODO: apple_arm64_common.h sets APPLE_ARM64_ARCH_FAMILY -> Apple sysreg accesses everywhere; each must be
   disabled for ZEUS before it runs on Cortex (sweet used a non-Apple-family config for this reason).
   RUNTIME TODO: with NO_CPU_OVRD, the CPU-off WFI path writes Apple S3_5_C15_C1_1 (IPI clear) -> UNDEF on Cortex.
