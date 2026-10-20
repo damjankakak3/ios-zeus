@@ -1,0 +1,237 @@
+diff --git a/osfmk/arm/machine_routines_apple.c b/osfmk/arm/machine_routines_apple.c
+index 144dab5..f353776 100644
+--- a/osfmk/arm/machine_routines_apple.c
++++ b/osfmk/arm/machine_routines_apple.c
+@@ -210,6 +210,11 @@ vmapple_pac_get_default_keys()
+ 		return;
+ 	}
+ 
++#if defined(ARM64_BOARD_CONFIG_ZEUS)
++	/* ZEUS: no hypervisor key service; keys are fixed, the pids only tag threads */
++	vmapple_default_rop_pid = 0;
++	vmapple_default_jop_pid = 0;
++#else
+ 	const uint64_t fn = VMAPPLE_PAC_GET_DEFAULT_KEYS;
+ 	asm volatile (
+                 "mov	x0, %[fn]"      "\n"
+@@ -222,6 +227,7 @@ vmapple_pac_get_default_keys()
+                 : [fn] "r"(fn)
+                 : "x0", "x1", "x2", "x3", "x4"
+         );
++#endif /* ARM64_BOARD_CONFIG_ZEUS */
+ }
+ 
+ #endif /* HAS_PARAVIRTUALIZED_PAC */
+diff --git a/osfmk/arm64/arm64_hypercall.c b/osfmk/arm64/arm64_hypercall.c
+index 29fc9f5..1cc9e77 100644
+--- a/osfmk/arm64/arm64_hypercall.c
++++ b/osfmk/arm64/arm64_hypercall.c
+@@ -128,6 +128,7 @@ hvc32_2(uint32_t *w0, uint32_t *w1)
+ }
+ 
+ /* Unique identification */
++#if !defined(ARM64_BOARD_CONFIG_ZEUS)
+ static bool
+ hvg_get_uid(uint32_t range, uuid_string_t uuid)
+ {
+@@ -174,9 +175,17 @@ hvg_get_features(uint32_t range, uint32_t fid, int32_t *features)
+ 	return hvc32_2((uint32_t *)features, &fid);
+ }
+ 
++#endif /* !ARM64_BOARD_CONFIG_ZEUS */
++
+ bool
+ hvg_is_hcall_available(hvg_hcall_code_t hcall)
+ {
++#if defined(ARM64_BOARD_CONFIG_ZEUS)
++	/* ZEUS runs under Qualcomm Gunyah, not Apple's hypervisor: no VMAPPLE hypercalls */
++	(void)hcall;
++	return false;
++#else
++
+ 	int32_t features = 0;
+ 	uint32_t major = 0, minor = 0;
+ 	uuid_string_t uuids = {};
+@@ -231,6 +240,7 @@ hvg_is_hcall_available(hvg_hcall_code_t hcall)
+ 	 * Does the host support this OEM hypercall?
+ 	 */
+ 	return hvg_get_features(HVC_FID_OEM, fastcall, &features);
++#endif /* ARM64_BOARD_CONFIG_ZEUS */
+ }
+ 
+ hvg_hcall_return_t
+diff --git a/osfmk/arm64/cswitch.s b/osfmk/arm64/cswitch.s
+index a191eb3..6cc39d6 100644
+--- a/osfmk/arm64/cswitch.s
++++ b/osfmk/arm64/cswitch.s
+@@ -224,8 +224,14 @@
+ 	msr		CONTEXTIDR_EL1, $1					// CONTEXTIDR_EL1 (top 32-bits are RES0).
+ .endmacro
+ 
++#if defined(ARM64_BOARD_CONFIG_ZEUS)
++/* ZEUS: one fixed PAC key set, nothing to reprogram on context switch */
++#define CSWITCH_ROP_KEYS	0
++#define CSWITCH_JOP_KEYS	0
++#else
+ #define CSWITCH_ROP_KEYS	(HAS_APPLE_PAC && HAS_PARAVIRTUALIZED_PAC)
+ #define CSWITCH_JOP_KEYS	(HAS_APPLE_PAC && HAS_PARAVIRTUALIZED_PAC)
++#endif
+ 
+ /*
+  * set_process_dependent_keys_and_sync_context
+diff --git a/osfmk/arm64/machine_routines_asm.s b/osfmk/arm64/machine_routines_asm.s
+index 864fb20..74066f8 100644
+--- a/osfmk/arm64/machine_routines_asm.s
++++ b/osfmk/arm64/machine_routines_asm.s
+@@ -107,7 +107,11 @@ Lcre_start_\@:
+ 	.globl EXT(ml_enable_user_jop_key)
+ LEXT(ml_enable_user_jop_key)
+ 	ARM64_PROLOG
+-#if HAS_PARAVIRTUALIZED_PAC
++#if defined(ARM64_BOARD_CONFIG_ZEUS)
++	/* ZEUS: keys never change; report the CPU's JOP key as the saved state */
++	LOAD_CPU_JOP_KEY x0, x1
++	ret
++#elif HAS_PARAVIRTUALIZED_PAC
+ 	mov 	x2, x0
+ 	MOV64	x0, VMAPPLE_PAC_SET_EL0_DIVERSIFIER_AT_EL1
+ 	mov		x1, #1
+@@ -124,7 +128,9 @@ LEXT(ml_enable_user_jop_key)
+ 	.globl EXT(ml_disable_user_jop_key)
+ LEXT(ml_disable_user_jop_key)
+ 	ARM64_PROLOG
+-#if HAS_PARAVIRTUALIZED_PAC
++#if defined(ARM64_BOARD_CONFIG_ZEUS)
++	ret
++#elif HAS_PARAVIRTUALIZED_PAC
+ 	mov 	x2, x1
+ 	MOV64	x0, VMAPPLE_PAC_SET_EL0_DIVERSIFIER_AT_EL1
+ 	mov		x1, #0
+@@ -1563,12 +1569,20 @@ LEXT(arm64_prepare_for_sleep)
+ vm_sleep_system:
+ 	MOV64	x0, PSCI_FN_ID_SYSTEM_SUSPEND
+ 	mov		x1, x2
++#if defined(ARM64_BOARD_CONFIG_ZEUS)
++	smc		0		// ZEUS: PSCI is SMC (DT psci method)
++#else
+ 	hvc		0
++#endif
+ 	b		.
+ 
+ vm_sleep_individual_cpu:
+ 	MOV64	x0, PSCI_FN_ID_CPU_OFF
++#if defined(ARM64_BOARD_CONFIG_ZEUS)
++	smc		0
++#else
+ 	hvc		0
++#endif
+ 	b		.
+ 
+ #endif /* APPLEVIRTUALPLATFORM */
+diff --git a/osfmk/arm64/pac_asm.h b/osfmk/arm64/pac_asm.h
+index d211433..a12d62c 100644
+--- a/osfmk/arm64/pac_asm.h
++++ b/osfmk/arm64/pac_asm.h
+@@ -35,7 +35,7 @@
+ 
+ #include <pexpert/arm64/board_config.h>
+ #include <arm64/proc_reg.h>
+-#if HAS_PARAVIRTUALIZED_PAC
++#if HAS_PARAVIRTUALIZED_PAC && !defined(ARM64_BOARD_CONFIG_ZEUS)
+ #include <arm64/hv_hvc.h>
+ #include "smccc_asm.h"
+ #endif
+@@ -97,7 +97,9 @@
+  *   tmp - scratch register
+  */
+ .macro SET_JOP_KEY_REGISTERS	new_jop_key, tmp
+-#if HAS_PARAVIRTUALIZED_PAC
++#if defined(ARM64_BOARD_CONFIG_ZEUS)
++	/* ZEUS: one fixed key set (PAC_INIT_KEY_STATE); nothing to switch */
++#elif HAS_PARAVIRTUALIZED_PAC
+ 	SAVE_SMCCC_CLOBBERED_REGISTERS
+ 	/*
+ 	 * We're deliberately calling PAC_SET_EL0_DIVERSIFIER here, even though the
+@@ -127,7 +129,9 @@
+  *   tmp - scratch register
+  */
+ .macro SET_ROP_KEY_REGISTERS	new_rop_key, tmp
+-#if HAS_PARAVIRTUALIZED_PAC
++#if defined(ARM64_BOARD_CONFIG_ZEUS)
++	/* ZEUS: one fixed key set (PAC_INIT_KEY_STATE); nothing to switch */
++#elif HAS_PARAVIRTUALIZED_PAC
+ 	SAVE_SMCCC_CLOBBERED_REGISTERS
+ 	MOV64	x0, VMAPPLE_PAC_SET_B_KEYS
+ 	mov		x1, \new_rop_key
+@@ -146,7 +150,30 @@
+  *   tmp2 - scratch register
+  */
+ .macro PAC_INIT_KEY_STATE	tmp, tmp2
+-#if HAS_PARAVIRTUALIZED_PAC
++#if defined(ARM64_BOARD_CONFIG_ZEUS)
++	/*
++	 * ZEUS: Cortex-X2/A710/A510 have the standard ARMv8.3 key registers and
++	 * no hypervisor PAC service. Every CPU loads the same fixed keys; kernel
++	 * and all processes share them (signing works, no isolation).
++	 */
++	MOV64	\tmp, ZEUS_PAC_KEY_LO
++	MOV64	\tmp2, ZEUS_PAC_KEY_HI
++	msr		APIAKeyLo_EL1, \tmp
++	msr		APIAKeyHi_EL1, \tmp2
++	add		\tmp, \tmp, #1
++	msr		APIBKeyLo_EL1, \tmp
++	msr		APIBKeyHi_EL1, \tmp2
++	add		\tmp, \tmp, #1
++	msr		APDAKeyLo_EL1, \tmp
++	msr		APDAKeyHi_EL1, \tmp2
++	add		\tmp, \tmp, #1
++	msr		APDBKeyLo_EL1, \tmp
++	msr		APDBKeyHi_EL1, \tmp2
++	add		\tmp, \tmp, #1
++	msr		APGAKeyLo_EL1, \tmp
++	msr		APGAKeyHi_EL1, \tmp2
++	isb		sy
++#elif HAS_PARAVIRTUALIZED_PAC
+ #if HIBERNATION
+ 	#error PAC_INIT_KEY_STATE is not implemented for HAS_PARAVIRTUALIZED_PAC && HIBERNATION
+ #endif
+diff --git a/pexpert/pexpert/arm64/ZEUS.h b/pexpert/pexpert/arm64/ZEUS.h
+index c63448f..2c8005a 100644
+--- a/pexpert/pexpert/arm64/ZEUS.h
++++ b/pexpert/pexpert/arm64/ZEUS.h
+@@ -30,9 +30,10 @@
+ #define _PEXPERT_ARM64_ZEUS_H
+ 
+ /*
+- * Xiaomi 12 Pro (zeus, SM8450). Step 1: the VMAPPLE configuration (no PPL/SPTM,
+- * GICv3, 16K pages) without SME; the paravirtual pieces (hypercalls for PAC,
+- * timebase, CTRR) are still VMAPPLE's and get replaced in later patches.
++ * Xiaomi 12 Pro (zeus, SM8450). The VMAPPLE configuration (no PPL/SPTM, GICv3,
++ * 16K pages) without SME and without Apple hypercalls (patch 0002): PAC uses
++ * fixed keys in the standard key registers, PSCI goes through SMC, the GIC
++ * redistributor stride is SM8450's.
+  */
+ #define ZEUS                      1
+ 
+@@ -49,7 +50,11 @@
+ #define APPLEVIRTUALPLATFORM      1
+ 
+ #define CPU_HAS_APPLE_PAC         1
+-#define HAS_PARAVIRTUALIZED_PAC   1
++#define HAS_PARAVIRTUALIZED_PAC   1 /* VMAPPLE's PAC code paths; ZEUS replaces the hypercalls */
++
++/* Fixed PAC keys loaded on every CPU (pac_asm.h PAC_INIT_KEY_STATE) */
++#define ZEUS_PAC_KEY_LO           0x5a45555330303031
++#define ZEUS_PAC_KEY_HI           0x494f53323630303a
+ #define HAS_GIC_V3                1
+ #define HAS_ARM_FEAT_SSBS2        1
+ #define HAS_ARM_FEAT_PAN3         1
+@@ -74,7 +79,7 @@
+ 
+ #define GIC_SPURIOUS_IRQ          1023    // IRQ no. for GIC spurious interrupt
+ 
+-#define GICR_PE_SIZE              0x20000 // Size of each redistributor region
++#define GICR_PE_SIZE              0x40000 // SM8450: GICv4 redistributor frames (DT redistributor-stride)
+ 
+ 
+ /* GICv3 reigster definitions; see GICv3 spec (Arm IHI 0069G) for more about these registers */

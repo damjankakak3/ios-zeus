@@ -90,6 +90,17 @@
   kernel.development.zeus, 22283960 bytes, + kernel.development.zeus.link/. sha256 not recorded (Collect's shasum
   hit the .link dir; fixed in the workflow). Patch 0001 = BUILD only; nothing in it makes the kernel run on Cortex.
   Next: 0002 runtime (hypercalls, PAC keys, GICR stride, Apple sysregs, CPU-off path), then the loader.
+  **0002 v1 (xnu/patches/0002-zeus-no-hypercalls-fixed-pac.patch, untested on CI when written):**
+  PAC_INIT_KEY_STATE writes fixed keys (ZEUS_PAC_KEY_LO/HI in ZEUS.h, +1 per key) to the standard
+  AP{IA,IB,DA,DB,GA}Key{Lo,Hi}_EL1; SET_JOP/ROP_KEY_REGISTERS and cswitch key reprogramming are off;
+  ml_enable/disable_user_jop_key no hvc; default rop/jop pid 0; hvg_is_hcall_available() = false (no VMAPPLE
+  hypercall ever issued on Gunyah); PSCI CPU_OFF/SYSTEM_SUSPEND via smc; GICR_PE_SIZE 0x40000.
+  Findings (source): the Apple-hardware sysreg paths are already skipped for APPLEVIRTUALPLATFORM (VMAPPLE
+  guests can't touch them either), and the CPU-off S3_5_C15_C1_1 write is dead code for VMAPPLE (PSCI first)
+  -> the earlier RUNTIME TODOs are not blockers. Kept APPLE_ARM64_ARCH_FAMILY: cache code assumes "fully
+  coherent" (CleanPoU no-op, dc civac for PoC). Guess: fine for CPU-only code on SM8450; non-coherent DMA
+  (USB) must do its own cache maintenance in our drivers. PV ticket locks: only built for virtualized SoCs.
+  research/xnu now has a local commit ffdc90a = 0001; 0002 is `git diff` against it.
   RUNTIME TODO: apple_arm64_common.h sets APPLE_ARM64_ARCH_FAMILY -> Apple sysreg accesses everywhere; each must be
   disabled for ZEUS before it runs on Cortex (sweet used a non-Apple-family config for this reason).
   RUNTIME TODO: with NO_CPU_OVRD, the CPU-off WFI path writes Apple S3_5_C15_C1_1 (IPI clear) -> UNDEF on Cortex.
