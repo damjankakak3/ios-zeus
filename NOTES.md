@@ -141,6 +141,8 @@
   controller when it is published, sendIPI = ICC_SGI1R SGI 1) and ZeusPMGR (enableCPUCore = PSCI CPU_ON via smc,
   idle hooks no-ops). mkadt: gic gets interrupt-controller + #interrupt-cells 1; cpus get interrupt-parent + 3
   interrupts (aic_ipis path). First boot uses cpus=1.
+  Run 39444636078 (216b151, 0001-0005): everything compiles except 2 errors in ZeusPlatform.cpp (const OSSymbol for
+  registerInterruptController; IOInterruptHandler's 3rd param is void *) -> fixed. kmutil step was skipped (build failed).
   RUNTIME TODO: apple_arm64_common.h sets APPLE_ARM64_ARCH_FAMILY -> Apple sysreg accesses everywhere; each must be
   disabled for ZEUS before it runs on Cortex (sweet used a non-Apple-family config for this reason).
   RUNTIME TODO: with NO_CPU_OVRD, the CPU-off WFI path writes Apple S3_5_C15_C1_1 (IPI clear) -> UNDEF on Cortex.

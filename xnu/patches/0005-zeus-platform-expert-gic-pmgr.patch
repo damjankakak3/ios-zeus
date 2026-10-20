@@ -1,6 +1,6 @@
 diff --git a/iokit/Kernel/arm/ZeusPlatform.cpp b/iokit/Kernel/arm/ZeusPlatform.cpp
 new file mode 100644
-index 0000000..6d755b6
+index 0000000..ec5b0d3
 --- /dev/null
 +++ b/iokit/Kernel/arm/ZeusPlatform.cpp
 @@ -0,0 +1,371 @@
@@ -64,7 +64,7 @@ index 0000000..6d755b6
 +	IONotifier *passthruNotifier = NULL;
 +
 +	static bool passthruPublished(void *target, void *refCon, IOService *newService, IONotifier *notifier);
-+	static void externalInterruptHandler(void *target, void *refCon, IOService *nub, int source);
++	static void externalInterruptHandler(void *target, void *refCon, void *nub, int source);
 +
 +public:
 +	bool start(IOService *provider) APPLE_KEXT_OVERRIDE;
@@ -93,7 +93,7 @@ index 0000000..6d755b6
 +	}
 +	const OSSymbol *name = IODTInterruptControllerName(gic);
 +	gic->release();
-+	if (name == NULL || getPlatform()->registerInterruptController(name, this) != kIOReturnSuccess) {
++	if (name == NULL || getPlatform()->registerInterruptController(const_cast<OSSymbol *>(name), this) != kIOReturnSuccess) {
 +		panic("ZEUS GIC: cannot register as the device tree's interrupt controller");
 +	}
 +	name->release();
@@ -125,7 +125,7 @@ index 0000000..6d755b6
 +}
 +
 +void
-+ZeusGIC::externalInterruptHandler(void * /*target*/, void * /*refCon*/, IOService * /*nub*/, int /*source*/)
++ZeusGIC::externalInterruptHandler(void * /*target*/, void * /*refCon*/, void * /*nub*/, int /*source*/)
 +{
 +	/* zeus takes GIC interrupts in sleh_irq; nothing should arrive here. */
 +}
@@ -293,7 +293,7 @@ index 0000000..6d755b6
 +
 +public:
 +	bool start(IOService *provider) APPLE_KEXT_OVERRIDE;
-+	void processTopLevel(IORegistryEntry *root) APPLE_KEXT_OVERRIDE;
++	void processTopLevel(IORegistryEntry *rootEntry) APPLE_KEXT_OVERRIDE;
 +	const char *deleteList(void) APPLE_KEXT_OVERRIDE;
 +	const char *excludeList(void) APPLE_KEXT_OVERRIDE;
 +	bool getTargetName(char *name, int maxLength) APPLE_KEXT_OVERRIDE;
@@ -340,19 +340,19 @@ index 0000000..6d755b6
 +}
 +
 +void
-+ZeusPlatformExpert::processTopLevel(IORegistryEntry *root)
++ZeusPlatformExpert::processTopLevel(IORegistryEntry *rootEntry)
 +{
 +	/*
 +	 * The stock implementation requires an Apple NVRAM /options node; zeus
 +	 * has none. Publish the CPU nubs (AppleARMSMP matches them by "reg") and
 +	 * the other top-level nodes.
 +	 */
-+	IORegistryEntry *cpus = root->childFromPath("cpus", gIODTPlane);
++	IORegistryEntry *cpus = rootEntry->childFromPath("cpus", gIODTPlane);
 +	if (cpus != NULL) {
 +		createNubs(this, IODTFindMatchingEntries(cpus, kIODTExclusive, NULL));
 +		cpus->release();
 +	}
-+	createNubs(this, IODTFindMatchingEntries(root, kIODTExclusive, excludeList()));
++	createNubs(this, IODTFindMatchingEntries(rootEntry, kIODTExclusive, excludeList()));
 +}
 +
 +bool
