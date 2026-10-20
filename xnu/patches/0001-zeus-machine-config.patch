@@ -173,21 +173,28 @@ index e37762b..067636a 100644
  endif
  
 diff --git a/osfmk/arm/pmap/pmap.c b/osfmk/arm/pmap/pmap.c
-index 19e7e67..d0877fa 100644
+index 19e7e67..201ae2f 100644
 --- a/osfmk/arm/pmap/pmap.c
 +++ b/osfmk/arm/pmap/pmap.c
-@@ -84,8 +84,10 @@
+@@ -84,8 +84,17 @@
  
  #include <arm64/proc_reg.h>
  #include <pexpert/arm64/boot.h>
 +#if !defined(ARM64_BOARD_CONFIG_ZEUS)   /* Apple SART/UAT: headers not published */
  #include <arm64/ppl/sart.h>
  #include <arm64/ppl/uat.h>
++#else
++/* only used in panic messages about Apple IOMMU (SART/UAT/DART) mappings */
++static inline void *
++ptep_get_iommu(const void *ptep __unused)
++{
++	return NULL;
++}
 +#endif
  
  #if defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR) || defined(KERNEL_INTEGRITY_PV_CTRR)
  #include <arm64/amcc_rorgn.h>
-@@ -2334,7 +2336,9 @@ pmap_bootstrap(
+@@ -2334,7 +2343,9 @@ pmap_bootstrap(
  	/**
  	 * Bootstrap any necessary SART data structures and values needed from the device tree.
  	 */
@@ -197,6 +204,31 @@ index 19e7e67..d0877fa 100644
  
  	/**
  	 * Don't make any assumptions about the alignment of avail_start before this
+@@ -12237,6 +12248,24 @@ pmap_unpin_kernel_pages(vm_offset_t kva __unused, size_t nbytes __unused)
+ #endif /* !XNU_MONITOR */
+ 
+ 
++#if defined(ARM64_BOARD_CONFIG_ZEUS) && !XNU_MONITOR
++/*
++ * ZEUS: these live in Apple's closed pmap code. Without a monitor (no PPL)
++ * there is nothing to lock pages against.
++ */
++static inline void
++pmap_ppl_lockdown_pages(vm_address_t kva __unused, vm_size_t size __unused,
++    uint16_t lockdown_flag __unused, bool ppl_writable __unused)
++{
++}
++
++static inline void
++pmap_ppl_unlockdown_pages(vm_address_t kva __unused, vm_size_t size __unused,
++    uint16_t lockdown_flag __unused, bool ppl_writable __unused)
++{
++}
++#endif /* ARM64_BOARD_CONFIG_ZEUS && !XNU_MONITOR */
++
+ MARK_AS_PMAP_TEXT static inline void
+ pmap_cs_lockdown_pages(vm_address_t kva, vm_size_t size, bool ppl_writable)
+ {
 diff --git a/osfmk/arm64/tunables/tunables.s b/osfmk/arm64/tunables/tunables.s
 new file mode 100644
 index 0000000..7169775
