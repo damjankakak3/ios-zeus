@@ -71,6 +71,8 @@
   Run 39346711070 (v5): 2 errors left in osfmk/arm/pmap/pmap.c: ptep_get_iommu (panic text only) and
   pmap_ppl_lockdown_pages/unlockdown (closed; PPL page lockdown) -> ZEUS no-op stubs (no monitor).
   Run 39349482046 (v6): 1 error: pmap_phys_write_disable used before its static definition -> forward decl.
+  Run 39352098696 (v7): no compile/link errors in the summary, only make[6] build_all Error 2 (non-compiler
+  failure: suspect exports/symbol-set check) -> summary now prints 25 lines before each failed make step.
   RUNTIME TODO: with NO_CPU_OVRD, the CPU-off WFI path writes Apple S3_5_C15_C1_1 (IPI clear) -> UNDEF on Cortex.
   Also noted: kernel is built with -DXNU_TARGET_OS_OSX / PLATFORM MacOSX (sweet did the same and ran iOS userland). Plan + source findings: `docs/xnu-plan.md` (VMAPPLE = no
   PPL/SPTM, GICv3, paravirtual PAC hooks -> fixed standard PAC keys on zeus; drop SME; GICR stride 0x40000).
