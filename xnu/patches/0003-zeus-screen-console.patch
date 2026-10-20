@@ -1,0 +1,571 @@
+diff --git a/osfmk/arm/arm_init.c b/osfmk/arm/arm_init.c
+index 6690846..f38ed3c 100644
+--- a/osfmk/arm/arm_init.c
++++ b/osfmk/arm/arm_init.c
+@@ -57,6 +57,7 @@
+ #endif
+ #include <pexpert/arm/consistent_debug.h>
+ #include <pexpert/device_tree.h>
++#include <arm64/zeus_early.h>
+ #include <arm64/proc_reg.h>
+ #include <arm/pmap.h>
+ #include <arm/caches_internal.h>
+@@ -356,7 +357,9 @@ arm_init(
+ 	DTEntry chosen = NULL;
+ 	unsigned int dt_entry_size = 0;
+ 
++	zeus_early_mark(1, "arm_init entered (MMU on)");
+ 	arm_slide_rebase_and_sign_image();
++	zeus_early_mark(2, "kernel collection rebased and signed");
+ 
+ 	arm_static_if_init(args);
+ 
+@@ -376,6 +379,7 @@ arm_init(
+ #endif /* defined(HAS_APPLE_PAC) */
+ 
+ 	PE_init_platform(FALSE, args); /* Get platform expert set up */
++	zeus_early_mark(3, "PE_init_platform done");
+ 
+ #if __arm64__
+ 	configure_timer_apple_regs();
+@@ -459,6 +463,7 @@ arm_init(
+ #endif
+ 
+ 	ml_parse_cpu_topology();
++	zeus_early_mark(4, "cpu topology parsed");
+ 
+ 
+ 	boot_cpu_id = ml_get_boot_cpu_number();
+@@ -495,6 +500,7 @@ arm_init(
+ 
+ 	kernel_debug_string_early("kernel_startup_bootstrap");
+ 	kernel_startup_bootstrap();
++	zeus_early_mark(5, "kernel_startup_bootstrap done");
+ 
+ 	/*
+ 	 * Initialize the timer callout world
+@@ -569,7 +575,9 @@ arm_init(
+ 	gDramSize = *dram_size;
+ 	pmap_first_pnum = (ppnum_t)atop(gDramBase);
+ 
++	zeus_early_mark(7, "entering arm_vm_init");
+ 	arm_vm_init(xmaxmem, args);
++	zeus_early_mark(13, "arm_vm_init returned");
+ 
+ 	if (debug_boot_arg) {
+ 		patch_low_glo();
+@@ -585,6 +593,7 @@ arm_init(
+ 	const unsigned int serial_exists = serial_init();
+ 	kernel_startup_initialize_upto(STARTUP_SUB_KPRINTF);
+ 	kprintf("kprintf initialized\n");
++	zeus_early_mark(14, serial_exists ? "kprintf on screen console" : "no serial console");
+ 
+ 	serialmode = 0;
+ 	if (PE_parse_boot_argn("serial", &serialmode, sizeof(serialmode))) {
+diff --git a/osfmk/arm64/Makefile b/osfmk/arm64/Makefile
+index 60f4224..c986d8f 100644
+--- a/osfmk/arm64/Makefile
++++ b/osfmk/arm64/Makefile
+@@ -53,6 +53,7 @@ EXPORT_MD_LIST = \
+ 	machine_remote_time.h \
+ 	monotonic.h \
+ 	proc_reg.h \
++	zeus_early.h \
+ 	asm.h \
+ 	speculation.h \
+ 	static_if.h \
+diff --git a/osfmk/arm64/arm_vm_init.c b/osfmk/arm64/arm_vm_init.c
+index 756af52..a24c7dd 100644
+--- a/osfmk/arm64/arm_vm_init.c
++++ b/osfmk/arm64/arm_vm_init.c
+@@ -39,6 +39,7 @@
+ #include <vm/pmap.h>
+ 
+ #include <machine/atomic.h>
++#include <arm64/zeus_early.h>
+ #include <arm64/proc_reg.h>
+ #include <arm64/lowglobals.h>
+ #include <arm/cpu_data_internal.h>
+@@ -1807,6 +1808,37 @@ init_ptpages(tt_entry_t *tt, vm_map_address_t start, vm_map_address_t end, bool
+ #define ARM64_PHYSMAP_SLIDE_RANGE (1ULL << 30) // 1 GB
+ #define ARM64_PHYSMAP_SLIDE_MASK  (ARM64_PHYSMAP_SLIDE_RANGE - 1)
+ 
++#if defined(ARM64_BOARD_CONFIG_ZEUS)
++/*
++ * zeus screen console: kernel VA aliases of the framebuffer and the MDSS
++ * block in the otherwise empty 32MB blocks above low globals and below
++ * gVirtBase (idea from ios-sweet patch 0012). They survive the bootstrap
++ * TTBR0 teardown and stay for the life of the kernel.
++ */
++#define ZEUS_FB_VA      (VM_MIN_KERNEL_ADDRESS + 1 * ARM_TT_L2_SIZE)
++#define ZEUS_MDSS_VA    (VM_MIN_KERNEL_ADDRESS + 2 * ARM_TT_L2_SIZE)
++
++static void
++zeus_map_block(vm_map_address_t va, uint64_t pa, uint64_t attrs)
++{
++	if (va + ARM_TT_L2_SIZE > gVirtBase) {
++		panic("zeus: console alias %llx overlaps the kernel", (unsigned long long)va);
++	}
++	tt_entry_t l1 = cpu_tte[(va & ARM_TT_L1_INDEX_MASK) >> ARM_TT_L1_SHIFT];
++	if ((l1 & (ARM_TTE_VALID | ARM_TTE_TYPE_MASK)) != (ARM_TTE_VALID | ARM_TTE_TYPE_TABLE)) {
++		panic("zeus: no L2 table for console alias %llx", (unsigned long long)va);
++	}
++	tt_entry_t *l2 = (tt_entry_t *)phystokv(l1 & ARM_TTE_TABLE_MASK);
++	tt_entry_t *slot = &l2[(va & ARM_TT_L2_INDEX_MASK) >> ARM_TT_L2_SHIFT];
++	if (*slot != ARM_TTE_EMPTY) {
++		panic("zeus: console alias %llx already in use", (unsigned long long)va);
++	}
++	*slot = pa | ARM_TTE_VALID | ARM_TTE_TYPE_BLOCK | ARM_TTE_BLOCK_AF |
++	    ARM_TTE_BLOCK_PNX | ARM_TTE_BLOCK_NX | attrs;
++	__asm__ volatile ("dsb ishst" ::: "memory");
++}
++#endif /* ARM64_BOARD_CONFIG_ZEUS */
++
+ void
+ arm_vm_init(uint64_t memory_size, boot_args * args)
+ {
+@@ -2161,14 +2193,25 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
+ 	kasan_init();
+ #endif /* KASAN */
+ 
++#if defined(ARM64_BOARD_CONFIG_ZEUS)
++	/* phystokv() must still refer to the bootstrap aperture here. */
++	zeus_map_block(ZEUS_FB_VA, ZEUS_FB_PA,
++	    ARM_TTE_BLOCK_SH(SH_OUTER_MEMORY) | ARM_TTE_BLOCK_ATTRINDX(CACHE_ATTRINDX_WRITECOMB));
++	zeus_map_block(ZEUS_MDSS_VA, ZEUS_MDSS_BLOCK_PA, ARM_TTE_BLOCK_ATTRINDX(CACHE_ATTRINDX_DISABLE));
++#endif
+ 	arm_vm_physmap_init(args);
+ 	set_mmu_ttb_alternate(cpu_ttep & TTBR_BADDR_MASK);
+ 
+ 	ml_enable_monitor();
+ 
++#if defined(ARM64_BOARD_CONFIG_ZEUS)
++	/* final TTBR1 is live; move the console off the outgoing VA=PA mapping */
++	zeus_early_relocate(ZEUS_FB_VA, ZEUS_MDSS_VA);
++#endif
+ 	set_mmu_ttb(invalid_ttep & TTBR_BADDR_MASK);
+ 
+ 	flush_mmu_tlb();
++	zeus_early_mark(10, "TTBR0 off, TLB flushed");
+ 	kva_active = TRUE;
+ 	// global table pointers may need to be different due to physical aperture remapping
+ 	cpu_tte = (tt_entry_t*)(phystokv(cpu_ttep));
+@@ -2265,7 +2308,9 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
+     }
+ #endif
+ #endif
++	zeus_early_mark(11, "pmap_bootstrap");
+ 	pmap_bootstrap(dynamic_memory_begin);
++	zeus_early_mark(12, "pmap_bootstrap done");
+ 
+ 	disable_preemption();
+ 
+diff --git a/osfmk/arm64/start.s b/osfmk/arm64/start.s
+index 6aa6fe4..e9389cb 100644
+--- a/osfmk/arm64/start.s
++++ b/osfmk/arm64/start.s
+@@ -620,6 +620,27 @@ Lkernelcache_base_found:
+ 	lsr		x5,  x24, #(ARM_TT_L2_SHIFT)
+ 	create_bootstrap_mapping x14, x15, x5, x3, x2, x9, x10, x11, x12, x13
+ 
++#if defined(ARM64_BOARD_CONFIG_ZEUS)
++	/*
++	 * zeus screen console (zeus_early.c): the splash framebuffer (Normal
++	 * non-cacheable) and the MDSS register block (Device) as 32MB blocks in
++	 * the EXISTING V=P L2 table. With 16K pages one L1 entry spans 64GB, so
++	 * RAM (0x900000000), framebuffer and MDSS share L1 index 0 and its L2
++	 * table, which is the first one allocated: bootstrap_pagetables + 2 pages.
++	 */
++	add		x13, x25, #(2 * PGBYTES)
++	MOV64	x10, 0xb8000000
++	MOV64	x11, (ARM_TTE_TYPE_BLOCK | ARM_TTE_VALID | ARM_TTE_BLOCK_SH(SH_OUTER_MEMORY) | ARM_TTE_BLOCK_ATTRINDX(CACHE_ATTRINDX_WRITECOMB) | ARM_TTE_BLOCK_AF | ARM_TTE_BLOCK_PNX | ARM_TTE_BLOCK_NX)
++	orr		x11, x11, x10
++	lsr		x12, x10, #(ARM_TT_L2_SHIFT)
++	str		x11, [x13, x12, lsl #TTE_SHIFT]
++	MOV64	x10, 0x0a000000
++	MOV64	x11, (ARM_TTE_TYPE_BLOCK | ARM_TTE_VALID | ARM_TTE_BLOCK_ATTRINDX(CACHE_ATTRINDX_DISABLE) | ARM_TTE_BLOCK_AF | ARM_TTE_BLOCK_PNX | ARM_TTE_BLOCK_NX)
++	orr		x11, x11, x10
++	lsr		x12, x10, #(ARM_TT_L2_SHIFT)
++	str		x11, [x13, x12, lsl #TTE_SHIFT]
++#endif /* ARM64_BOARD_CONFIG_ZEUS */
++
+ 	/* Ensure TTEs are visible */
+ 	dsb		ish
+ 
+diff --git a/osfmk/arm64/zeus_early.c b/osfmk/arm64/zeus_early.c
+new file mode 100644
+index 0000000..7a3dfd5
+--- /dev/null
++++ b/osfmk/arm64/zeus_early.c
+@@ -0,0 +1,200 @@
++/*
++ * Xiaomi 12 Pro (zeus) screen console. Ported from ios-sweet's sweet_early.c
++ * (xnu patches 0003/0010/0012), reworked for zeus:
++ *   - framebuffer: the ABL splash buffer, 1440x3200, 32 bpp, stride 5760
++ *   - the panel is a command-mode DSI panel: it only shows a new frame when
++ *     the display controller is told to send one, so every flush writes
++ *     CTL_0 START (the same kick the probe shim uses)
++ *
++ * No allocation, locks, ADT parsing or per-CPU state: this runs from the
++ * first line of arm_init (before the kernel collection is rebased, so no
++ * initialized data pointers) and from panic(). start.s maps the framebuffer
++ * (Normal non-cacheable) and the MDSS block (Device) VA=PA in the bootstrap
++ * TTBR0; arm_vm_init installs permanent kernel VA aliases and calls
++ * zeus_early_relocate() before TTBR0 goes away. The "zeus,fbcon" serial
++ * driver (pe_serial.c) prints through the same code afterwards.
++ */
++#include <arm64/zeus_early.h>
++
++#if defined(ARM64_BOARD_CONFIG_ZEUS)
++#include <stdbool.h>
++#include <stdint.h>
++#include <kern/misc_protos.h>
++
++#define FB_W            1440u
++#define FB_H            3200u
++#define FB_STRIDE_PX    (5760u / 4)
++#define SCALE           2u
++#define CELL_W          (8u * SCALE)
++#define CELL_H          (16u * SCALE)
++#define BAR_H           32u
++#define ROWS            ((FB_H - BAR_H) / CELL_H)
++#define COLS            (FB_W / CELL_W)
++#define FG              0xffffffffu
++#define BG              0xff000000u
++
++/* CTL_0 START inside the MDSS block mapped by start.s / arm_vm_init */
++#define CTL0_START_OFF  (0x0ae1601cULL - ZEUS_MDSS_BLOCK_PA)
++/* at most one frame per 20 ms (the panel runs at 60-120 Hz) */
++#define KICK_TICKS      (19200000ull / 50)
++
++extern unsigned char iso_font[256 * 16];
++
++/* Integers, not pointers: valid before the kernel collection is rebased. */
++static uintptr_t fb_va = ZEUS_FB_PA;
++static uintptr_t mdss_va = ZEUS_MDSS_BLOCK_PA;
++static unsigned int row, col, started, panicking;
++static uint64_t last_kick;
++
++static inline volatile uint32_t *
++fb_line(unsigned int y)
++{
++	return (volatile uint32_t *)(fb_va + (uintptr_t)y * FB_STRIDE_PX * 4);
++}
++
++static inline uint64_t
++ticks(void)
++{
++	__asm__ volatile ("isb" ::: "memory");
++	return __builtin_arm_rsr64("CNTVCT_EL0");
++}
++
++static void
++kick(bool wait)
++{
++	uint64_t now = ticks();
++
++	if (now - last_kick < KICK_TICKS) {
++		if (!wait) {
++			return;
++		}
++		while ((now = ticks()) - last_kick < KICK_TICKS) {
++		}
++	}
++	__asm__ volatile ("dsb sy" ::: "memory");
++	*(volatile uint32_t *)(mdss_va + CTL0_START_OFF) = 1;
++	__asm__ volatile ("dsb sy" ::: "memory");
++	last_kick = now;
++}
++
++static void
++clear_row(unsigned int r)
++{
++	for (unsigned int y = r * CELL_H; y < (r + 1) * CELL_H; y++) {
++		volatile uint32_t *line = fb_line(y);
++		for (unsigned int x = 0; x < FB_W; x++) {
++			line[x] = BG;
++		}
++	}
++}
++
++static void
++newline(void)
++{
++	col = 0;
++	row = (row + 1) % ROWS;
++	clear_row(row);
++	clear_row((row + 1) % ROWS);	/* blank line marks the newest output */
++	kick(false);
++}
++
++void
++zeus_early_putc(char c)
++{
++	if (!started) {
++		started = 1;
++		clear_row(0);
++		clear_row(1);
++	}
++	if (c == '\r') {
++		col = 0;
++		return;
++	}
++	if (c == '\n') {
++		newline();
++		return;
++	}
++	if (col >= COLS) {
++		newline();
++	}
++	const unsigned char *glyph = iso_font + (unsigned char)c * 16;
++	for (unsigned int gy = 0; gy < 16; gy++) {
++		for (unsigned int sy = 0; sy < SCALE; sy++) {
++			volatile uint32_t *line = fb_line(row * CELL_H + gy * SCALE + sy) + col * CELL_W;
++			for (unsigned int gx = 0; gx < 8; gx++) {
++				uint32_t px = (glyph[gy] & (1u << gx)) ? FG : BG;
++				for (unsigned int sx = 0; sx < SCALE; sx++) {
++					line[gx * SCALE + sx] = px;
++				}
++			}
++		}
++	}
++	col++;
++}
++
++static void
++puts_early(const char *s)
++{
++	while (*s) {
++		zeus_early_putc(*s++);
++	}
++}
++
++void
++zeus_early_flush(void)
++{
++	kick(true);
++}
++
++/* Progress bar at the bottom (one coloured 40 px block per stage) + a text line. */
++void
++zeus_early_mark(unsigned int stage, const char *label)
++{
++	if (stage < FB_W / 40) {
++		uint32_t color = 0xff00ff00u | ((stage & 7u) * 32u << 16);
++		for (unsigned int y = FB_H - BAR_H; y < FB_H; y++) {
++			volatile uint32_t *line = fb_line(y);
++			for (unsigned int x = stage * 40; x < stage * 40 + 36; x++) {
++				line[x] = color;
++			}
++		}
++	}
++	puts_early("ZEUS ");
++	if (stage >= 10) {
++		zeus_early_putc((char)('0' + stage / 10 % 10));
++	}
++	zeus_early_putc((char)('0' + stage % 10));
++	puts_early(": ");
++	puts_early(label);
++	zeus_early_putc('\n');
++	kick(true);
++}
++
++void
++zeus_early_panic(const char *fmt, va_list *args)
++{
++	if (panicking) {
++		return;
++	}
++	panicking = 1;
++	puts_early("\nZEUS PANIC: ");
++	if (fmt != NULL && args != NULL) {
++		va_list copy;
++		va_copy(copy, *args);
++		_doprnt(fmt, &copy, zeus_early_putc, 16);
++		va_end(copy);
++	}
++	zeus_early_putc('\n');
++	kick(true);
++}
++
++void
++zeus_early_relocate(uint64_t fb, uint64_t mdss_block)
++{
++	zeus_early_mark(8, "leaving bootstrap TTBR0");
++	fb_va = (uintptr_t)fb;
++	mdss_va = (uintptr_t)mdss_block;
++	__asm__ volatile ("dsb sy" ::: "memory");
++	zeus_early_mark(9, "kernel framebuffer alias live");
++}
++#endif /* ARM64_BOARD_CONFIG_ZEUS */
+diff --git a/osfmk/arm64/zeus_early.h b/osfmk/arm64/zeus_early.h
+new file mode 100644
+index 0000000..379cc8d
+--- /dev/null
++++ b/osfmk/arm64/zeus_early.h
+@@ -0,0 +1,28 @@
++/* zeus screen console: bootstrap TTBR0 first, then permanent kernel VA aliases. */
++#ifndef _ARM64_ZEUS_EARLY_H_
++#define _ARM64_ZEUS_EARLY_H_
++
++#include <pexpert/arm64/board_config.h>
++#include <stdarg.h>
++#include <stdint.h>
++
++/* ABL splash framebuffer and the 32 MB block holding the MDSS (display) registers */
++#define ZEUS_FB_PA              0xb8000000ULL
++#define ZEUS_MDSS_BLOCK_PA      0x0a000000ULL
++
++#if defined(ARM64_BOARD_CONFIG_ZEUS)
++void zeus_early_mark(unsigned int stage, const char *label);
++void zeus_early_putc(char c);
++void zeus_early_flush(void);
++void zeus_early_panic(const char *fmt, va_list *args);
++void zeus_early_relocate(uint64_t fb, uint64_t mdss_block);
++#else
++static inline void
++zeus_early_mark(unsigned int stage, const char *label)
++{
++	(void)stage;
++	(void)label;
++}
++#endif
++
++#endif /* _ARM64_ZEUS_EARLY_H_ */
+diff --git a/osfmk/conf/files.arm64 b/osfmk/conf/files.arm64
+index 878b515..4cae0b2 100644
+--- a/osfmk/conf/files.arm64
++++ b/osfmk/conf/files.arm64
+@@ -53,6 +53,7 @@ osfmk/arm/arm_timer.c		standard
+ osfmk/arm/arm_init.c	optional config_pmap_ppl
+ osfmk/arm64/arm_vm_init.c	optional config_pmap_ppl
+ osfmk/arm64/arm64_hypercall.c	standard
++osfmk/arm64/zeus_early.c	standard
+ osfmk/arm/io_map.c		standard
+ osfmk/arm64/loose_ends.c	standard
+ osfmk/arm/locks_arm.c	standard
+diff --git a/osfmk/kern/debug.c b/osfmk/kern/debug.c
+index 48f9405..ee5e364 100644
+--- a/osfmk/kern/debug.c
++++ b/osfmk/kern/debug.c
+@@ -86,6 +86,9 @@
+ #include <stdatomic.h>
+ #include <sys/pgo.h>
+ #include <console/serial_protos.h>
++#if defined(__arm64__)
++#include <arm64/zeus_early.h>
++#endif
+ #include <IOKit/IOBSD.h>
+ #include <libkern/crc.h>
+ 
+@@ -1253,6 +1256,11 @@ panic_trap_to_debugger(const char *panic_format_str, va_list *panic_args, unsign
+ {
+ #pragma clang diagnostic pop
+ 
++#if defined(ARM64_BOARD_CONFIG_ZEUS)
++	/* No CPU/thread/debugger state needed: works from the first instruction of arm_init. */
++	zeus_early_panic(panic_format_str, panic_args);
++#endif
++
+ #if defined(__x86_64__) && (DEVELOPMENT || DEBUG)
+ 	read_lbr();
+ #endif
+diff --git a/pexpert/arm/pe_serial.c b/pexpert/arm/pe_serial.c
+index 032d9e0..ee9fd3b 100644
+--- a/pexpert/arm/pe_serial.c
++++ b/pexpert/arm/pe_serial.c
+@@ -25,6 +25,7 @@
+ #include <pexpert/device_tree.h>
+ #include <pexpert/arm/consistent_debug.h>
+ #include <pexpert/arm64/board_config.h>
++#include <arm64/zeus_early.h>
+ #include <arm64/proc_reg.h>
+ #include <pexpert/arm/protos.h>
+ #include <kern/sched_prim.h>
+@@ -792,6 +793,62 @@ serial_hibernation_cleanup(void)
+ }
+ #endif /* HIBERNATION */
+ 
++#if defined(ARM64_BOARD_CONFIG_ZEUS)
++/*
++ * zeus: no usable UART (retail phone; the GENI debug UART is on test pads).
++ * kprintf goes to the screen console in osfmk/arm64/zeus_early.c, which is
++ * already running since arm_init and kicks the command-mode panel itself.
++ * ADT: /defaults serial-device = phandle of a node with compatible "zeus,fbcon".
++ */
++static void
++zeus_fbcon_init(void)
++{
++}
++
++static unsigned int
++zeus_fbcon_transmit_ready(void)
++{
++	return 1;
++}
++
++static void
++zeus_fbcon_transmit_data(uint8_t c)
++{
++	zeus_early_putc((char)c);
++	if (c == '\n') {
++		zeus_early_flush();
++	}
++}
++
++static unsigned int
++zeus_fbcon_receive_ready(void)
++{
++	return 0;
++}
++
++static uint8_t
++zeus_fbcon_receive_data(void)
++{
++	return 0;
++}
++
++SECURITY_READ_ONLY_LATE(static struct pe_serial_functions) zeus_fbcon_serial_functions =
++{
++	.init = zeus_fbcon_init,
++	.transmit_ready = zeus_fbcon_transmit_ready,
++	.transmit_data = zeus_fbcon_transmit_data,
++	.receive_ready = zeus_fbcon_receive_ready,
++	.receive_data = zeus_fbcon_receive_data,
++	.device = SERIAL_ZEUS_FBCON
++};
++
++static void
++zeus_fbcon_setup(const DeviceTreeNode *const devicetree_node __unused)
++{
++	register_serial_functions(&zeus_fbcon_serial_functions);
++}
++#endif /* ARM64_BOARD_CONFIG_ZEUS */
++
+ /**
+  * @brief This array maps "compatible" strings from the devicetree identifying
+  * different serial device drivers to their corresponding setup functions.
+@@ -809,6 +866,9 @@ static const struct {
+ #ifdef PL011_UART
+ 	{ .compatible = "arm,pl011", .setup = pl011_uart_setup },
+ #endif // PL011_UART
++#if defined(ARM64_BOARD_CONFIG_ZEUS)
++	{ .compatible = "zeus,fbcon", .setup = zeus_fbcon_setup },
++#endif
+ };
+ 
+ /**
+diff --git a/pexpert/pexpert/arm/protos.h b/pexpert/pexpert/arm/protos.h
+index f8fcbc2..c6897ca 100644
+--- a/pexpert/pexpert/arm/protos.h
++++ b/pexpert/pexpert/arm/protos.h
+@@ -47,7 +47,8 @@ typedef enum serial_device {
+ 	SERIAL_APPLE_UART=0x1,
+ 	SERIAL_DOCKCHANNEL=0x2,
+ 	SERIAL_PL011_UART=0x4,
+-	SERIAL_DCC_UART=0x8
++	SERIAL_DCC_UART=0x8,
++	SERIAL_ZEUS_FBCON=0x10
+ } serial_device_t;
+ 
+ kern_return_t serial_irq_enable(serial_device_t device);

@@ -103,6 +103,25 @@ jobs:
           set -o pipefail
           bash build.sh 2>&1 | tee ../build.log
 
+      - name: Kernel collection (kernel only, kmutil)
+        # The arm64e kernel only rebases and signs its own pointers when it boots
+        # from an MH_FILESET kernel collection (arm_init.c kernel_collection_slide).
+        # No kexts: ZEUS drivers are built into the kernel.
+        continue-on-error: true
+        run: |
+          mkdir -p out
+          K=dxb/fakeroot/System/Library/Kernels/kernel.$(echo "$KERNEL_CONFIG" | tr A-Z a-z).$(echo "$MACHINE_CONFIG" | tr A-Z a-z)
+          echo "kernel: $K"
+          KDK=$(ls -d /Library/Developer/KDKs/*.kdk | sort -V | tail -1)
+          echo "KDK: $KDK"
+          kmutil create --help 2>&1 | head -80 || true
+          V=$(echo "$KERNEL_CONFIG" | tr A-Z a-z)
+          KC=out/kernelcache.$V.$(echo "$MACHINE_CONFIG" | tr A-Z a-z)
+          kmutil create -v -V "$V" -a arm64e -n boot -s none --kdk "$KDK" -B "$KC" -k "$K" -x 2>&1 | tail -60
+          ls -la "$KC"
+          otool -hv "$KC"
+          otool -l "$KC" | grep -A4 -E 'LC_FILESET_ENTRY|cmd LC_SEGMENT_64' | grep -E 'entry_id|segname|vmaddr|vmsize|fileoff' | head -60
+
       - name: Error summary
         if: always()
         run: |
@@ -134,7 +153,7 @@ jobs:
           mkdir -p out
           cp -R dxb/fakeroot/System/Library/Kernels/. out/ 2>/dev/null || true
           ls -la out
-          (cd out && find . -maxdepth 1 -type f -name 'kernel.*' -exec shasum -a 256 {} + | tee SHA256SUMS) || true
+          (cd out && find . -maxdepth 1 -type f \( -name 'kernel.*' -o -name 'kernelcache.*' \) -exec shasum -a 256 {} + | tee SHA256SUMS) || true
 
       - uses: actions/upload-artifact@v4
         if: always()

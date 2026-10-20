@@ -104,6 +104,15 @@
   **Run 39366356838 (cb29ee6, 0001+0002): SUCCESS.** kernel.development.zeus 22283528 bytes, sha256
   6eea31abc4e1207e2d3bfa6da08858e4d70258326db099f6bc93aeed12fb6ec9, artifact id 12239564715.
   Not run on hardware. Next: loader (design in docs/xnu-plan.md "Loader design"), then 0003 USB console.
+  **0003 zeus-screen-console (pushed with the kmutil step, CI pending):** osfmk/arm64/zeus_early.c (from sweet
+  0003/0010/0012): text console on the ABL framebuffer, kicks CTL_0 START (command-mode panel) at most every 20 ms
+  and on every progress mark; start.s maps fb (WC) + MDSS block 0x0a000000 (Device) VA=PA in the bootstrap V=P L2;
+  arm_vm_init adds permanent aliases at VM_MIN_KERNEL_ADDRESS + 1/2 x 32MB and relocates before TTBR0 goes;
+  progress marks 1-14 (bar at the bottom + text); panic text on screen from arm_init on; pe_serial.c driver
+  "zeus,fbcon" (ADT /defaults serial-device -> phandle) routes kprintf to the same console.
+  **Fact (source): a plain MH_EXECUTE arm64e kernel never signs its auth pointers** (arm_slide_rebase_and_sign_image
+  only rebases/signs a MH_FILESET KC or a static kernelcache). Sweet avoided this with a non-PAC kernel. So CI now
+  builds a kernel-only boot KC: `kmutil create -a arm64e -n boot -x -k kernel ...` -> out/kernelcache.development.zeus.
   RUNTIME TODO: apple_arm64_common.h sets APPLE_ARM64_ARCH_FAMILY -> Apple sysreg accesses everywhere; each must be
   disabled for ZEUS before it runs on Cortex (sweet used a non-Apple-family config for this reason).
   RUNTIME TODO: with NO_CPU_OVRD, the CPU-off WFI path writes Apple S3_5_C15_C1_1 (IPI clear) -> UNDEF on Cortex.
