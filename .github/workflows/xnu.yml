@@ -114,10 +114,14 @@ jobs:
           echo "kernel: $K"
           KDK=$(ls -d /Library/Developer/KDKs/*.kdk | sort -V | tail -1)
           echo "KDK: $KDK"
-          kmutil create --help 2>&1 | head -80 || true
           V=$(echo "$KERNEL_CONFIG" | tr A-Z a-z)
           KC=out/kernelcache.$V.$(echo "$MACHINE_CONFIG" | tr A-Z a-z)
-          kmutil create -v -V "$V" -a arm64e -n boot -s none --kdk "$KDK" -B "$KC" -k "$K" -x 2>&1 | tail -60
+          # kmutil wants a KDK matching the runner's own macOS build; ours matches the
+          # kernel (macOS 26.5). Name that build and allow the mismatch.
+          BUILD=$(basename "$KDK" .kdk | sed 's/.*_//')
+          kmutil create -v -V "$V" -a arm64e -n boot -s none --kdk "$KDK" --build "$BUILD" --allow-missing-kdk \
+            --no-variant-extension -B "$KC" -k "$K" -x 2>&1 | tail -60
+          ls -la out/
           ls -la "$KC"
           otool -hv "$KC"
           otool -l "$KC" | grep -A4 -E 'LC_FILESET_ENTRY|cmd LC_SEGMENT_64' | grep -E 'entry_id|segname|vmaddr|vmsize|fileoff' | head -60
