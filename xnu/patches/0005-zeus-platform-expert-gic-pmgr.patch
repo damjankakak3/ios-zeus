@@ -1,0 +1,406 @@
+diff --git a/iokit/Kernel/arm/ZeusPlatform.cpp b/iokit/Kernel/arm/ZeusPlatform.cpp
+new file mode 100644
+index 0000000..6d755b6
+--- /dev/null
++++ b/iokit/Kernel/arm/ZeusPlatform.cpp
+@@ -0,0 +1,371 @@
++/*
++ * Xiaomi 12 Pro (zeus) built-in platform drivers. The VMAPPLE configuration
++ * gets these from closed kexts; ZEUS boots without kexts, so they live here:
++ *
++ *   ZeusPlatformExpert  device-tree platform expert (from ios-sweet patch
++ *                       0016 SweetPlatformExpert), no NVRAM /options node
++ *   ZeusGIC             the child interrupt controller AppleARMSMP waits for
++ *                       (gAIC): IPIs are GICv3 SGIs sent with ICC_SGI1R_EL1.
++ *                       Interrupts themselves are taken in sleh_irq
++ *                       (zeus_gic_irq, patch 0004), not through this class.
++ *   ZeusPMGR            IOPMGR: secondary CPUs start with PSCI CPU_ON (SMC)
++ *
++ * ADT contract (tools/mkadt.py): /arm-io/gic has "interrupt-controller" and
++ * "#interrupt-cells" = 1; every /cpus/cpuN has "interrupt-parent" = the GIC
++ * phandle and three "interrupts" (AppleARMSMP's legacy IPI layout).
++ */
++#include <pexpert/arm64/board_config.h>
++
++#if defined(ARM64_BOARD_CONFIG_ZEUS)
++#include <IOKit/IOPlatformExpert.h>
++#include <IOKit/IODeviceTreeSupport.h>
++#include <IOKit/IOInterruptController.h>
++#include <IOKit/IOPMGR.h>
++#include <IOKit/IOLib.h>
++#include <libkern/c++/OSData.h>
++
++extern "C" {
++#include <machine/machine_routines.h>
++}
++
++#define ZEUS_IPI_SGI            1
++
++#define PSCI_CPU_ON             0xc4000003ULL
++#define PSCI_RET_SUCCESS        0
++#define PSCI_RET_ALREADY_ON     (-4)
++
++static uint64_t
++zeus_smc(uint64_t fn, uint64_t a1, uint64_t a2, uint64_t a3)
++{
++	uint64_t ret;
++	asm volatile ("mov x0, %1\n\t"
++            "mov x1, %2\n\t"
++            "mov x2, %3\n\t"
++            "mov x3, %4\n\t"
++            "smc #0\n\t"
++            "mov %0, x0"
++            : "=r"(ret)
++            : "r"(fn), "r"(a1), "r"(a2), "r"(a3)
++            : "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11",
++              "x12", "x13", "x14", "x15", "x16", "x17", "memory");
++	return ret;
++}
++
++/* ---------------------------------------------------------------------- */
++
++class ZeusGIC : public IOInterruptController {
++	OSDeclareDefaultStructors(ZeusGIC);
++	IONotifier *passthruNotifier = NULL;
++
++	static bool passthruPublished(void *target, void *refCon, IOService *newService, IONotifier *notifier);
++	static void externalInterruptHandler(void *target, void *refCon, IOService *nub, int source);
++
++public:
++	bool start(IOService *provider) APPLE_KEXT_OVERRIDE;
++	IOReturn registerInterrupt(IOService *nub, int source, void *target,
++	    IOInterruptHandler handler, void *refCon) APPLE_KEXT_OVERRIDE;
++	IOReturn getInterruptType(IOService *nub, int source, int *interruptType) APPLE_KEXT_OVERRIDE;
++	IOReturn enableInterrupt(IOService *nub, int source) APPLE_KEXT_OVERRIDE;
++	IOReturn disableInterrupt(IOService *nub, int source) APPLE_KEXT_OVERRIDE;
++	IOReturn causeInterrupt(IOService *nub, int source) APPLE_KEXT_OVERRIDE;
++	IOReturn handleInterrupt(void *refCon, IOService *nub, int source) APPLE_KEXT_OVERRIDE;
++	void sendIPI(unsigned int cpu_id, bool deferred) APPLE_KEXT_OVERRIDE;
++	void cancelDeferredIPI(unsigned int cpu_id) APPLE_KEXT_OVERRIDE;
++};
++
++OSDefineMetaClassAndStructors(ZeusGIC, IOInterruptController);
++
++bool
++ZeusGIC::start(IOService *provider)
++{
++	if (!IOInterruptController::start(provider)) {
++		return false;
++	}
++	IORegistryEntry *gic = IORegistryEntry::fromPath("/arm-io/gic", gIODTPlane);
++	if (gic == NULL) {
++		panic("ZEUS GIC: no /arm-io/gic in the device tree");
++	}
++	const OSSymbol *name = IODTInterruptControllerName(gic);
++	gic->release();
++	if (name == NULL || getPlatform()->registerInterruptController(name, this) != kIOReturnSuccess) {
++		panic("ZEUS GIC: cannot register as the device tree's interrupt controller");
++	}
++	name->release();
++	registerService();
++
++	/* AppleARMSMP's cpu_boot_thread creates PassthruInterruptController once
++	 * the platform expert exists and then waits for its child controller. */
++	OSDictionary *matching = IOService::serviceMatching("PassthruInterruptController");
++	passthruNotifier = IOService::addMatchingNotification(gIOFirstPublishNotification, matching,
++	    &ZeusGIC::passthruPublished, this, NULL, 0);
++	matching->release();
++	IOLog("ZEUS GIC: started, waiting for the CPU interrupt controller\n");
++	return passthruNotifier != NULL;
++}
++
++bool
++ZeusGIC::passthruPublished(void *target, void * /*refCon*/, IOService *newService, IONotifier *notifier)
++{
++	ZeusGIC *self = static_cast<ZeusGIC *>(target);
++	IOInterruptController *passthru = OSDynamicCast(IOInterruptController, newService);
++	if (passthru == NULL) {
++		return false;
++	}
++	/* PassthruInterruptController returns |target| from waitForChildController(). */
++	passthru->registerInterrupt(self, 0, self, &ZeusGIC::externalInterruptHandler, NULL);
++	notifier->remove();
++	IOLog("ZEUS GIC: registered as the CPU's child interrupt controller\n");
++	return true;
++}
++
++void
++ZeusGIC::externalInterruptHandler(void * /*target*/, void * /*refCon*/, IOService * /*nub*/, int /*source*/)
++{
++	/* zeus takes GIC interrupts in sleh_irq; nothing should arrive here. */
++}
++
++IOReturn
++ZeusGIC::registerInterrupt(IOService * /*nub*/, int /*source*/, void * /*target*/,
++    IOInterruptHandler /*handler*/, void * /*refCon*/)
++{
++	/* The CPU nubs' IPI sources: sleh_irq calls cpu_signal_handler for every SGI. */
++	return kIOReturnSuccess;
++}
++
++IOReturn
++ZeusGIC::getInterruptType(IOService * /*nub*/, int /*source*/, int *interruptType)
++{
++	if (interruptType == NULL) {
++		return kIOReturnBadArgument;
++	}
++	*interruptType = kIOInterruptTypeEdge;
++	return kIOReturnSuccess;
++}
++
++IOReturn
++ZeusGIC::enableInterrupt(IOService * /*nub*/, int /*source*/)
++{
++	return kIOReturnSuccess;
++}
++
++IOReturn
++ZeusGIC::disableInterrupt(IOService * /*nub*/, int /*source*/)
++{
++	return kIOReturnSuccess;
++}
++
++IOReturn
++ZeusGIC::causeInterrupt(IOService * /*nub*/, int /*source*/)
++{
++	return kIOReturnUnsupported;
++}
++
++IOReturn
++ZeusGIC::handleInterrupt(void * /*refCon*/, IOService * /*nub*/, int /*source*/)
++{
++	return kIOReturnSuccess;
++}
++
++void
++ZeusGIC::sendIPI(unsigned int cpu_id, bool /*deferred*/)
++{
++	const ml_topology_info_t *topo = ml_get_topology_info();
++	if (cpu_id >= topo->num_cpus) {
++		panic("ZEUS GIC: IPI to unknown cpu %u", cpu_id);
++	}
++	uint64_t mpidr = topo->cpus[cpu_id].phys_id;
++	uint64_t aff0 = mpidr & 0xff;
++	if (aff0 >= 16) {
++		panic("ZEUS GIC: SGI target needs a range selector (MPIDR %llx)", mpidr);
++	}
++	uint64_t sgi = (((mpidr >> 16) & 0xff) << 32) |        /* Aff2 */
++	    (((mpidr >> 8) & 0xff) << 16) |                     /* Aff1 */
++	    ((uint64_t)ZEUS_IPI_SGI << 24) |
++	    (1ULL << aff0);                                     /* target list */
++	asm volatile ("dsb ishst" ::: "memory");
++	__builtin_arm_wsr64("ICC_SGI1R_EL1", sgi);
++	asm volatile ("isb" ::: "memory");
++}
++
++void
++ZeusGIC::cancelDeferredIPI(unsigned int /*cpu_id*/)
++{
++	/* deferred IPIs are sent immediately */
++}
++
++/* ---------------------------------------------------------------------- */
++
++class ZeusPMGR : public IOPMGR {
++	OSDeclareDefaultStructors(ZeusPMGR);
++
++public:
++	bool start(IOService *provider) APPLE_KEXT_OVERRIDE;
++	void enableCPUCore(unsigned int cpu_id, uint64_t entry_pa) APPLE_KEXT_OVERRIDE;
++	void disableCPUCore(unsigned int cpu_id) APPLE_KEXT_OVERRIDE;
++	void enableCPUCluster(unsigned int cluster_id) APPLE_KEXT_OVERRIDE;
++	void disableCPUCluster(unsigned int cluster_id) APPLE_KEXT_OVERRIDE;
++	void initCPUIdle(ml_processor_info_t *info) APPLE_KEXT_OVERRIDE;
++	void enterCPUIdle(UInt64 *newIdleTimeoutTicks) APPLE_KEXT_OVERRIDE;
++	void exitCPUIdle(UInt64 *newIdleTimeoutTicks) APPLE_KEXT_OVERRIDE;
++	void updateCPUIdle(UInt64 *newIdleTimeoutTicks) APPLE_KEXT_OVERRIDE;
++};
++
++OSDefineMetaClassAndStructors(ZeusPMGR, IOPMGR);
++
++bool
++ZeusPMGR::start(IOService *provider)
++{
++	if (!IOPMGR::start(provider)) {
++		return false;
++	}
++	registerService();
++	IOLog("ZEUS PMGR: started (PSCI CPU_ON via SMC)\n");
++	return true;
++}
++
++void
++ZeusPMGR::enableCPUCore(unsigned int cpu_id, uint64_t entry_pa)
++{
++	const ml_topology_info_t *topo = ml_get_topology_info();
++	uint64_t mpidr = topo->cpus[cpu_id].phys_id;
++	int64_t ret = (int64_t)zeus_smc(PSCI_CPU_ON, mpidr, entry_pa, 0);
++	if (ret != PSCI_RET_SUCCESS && ret != PSCI_RET_ALREADY_ON) {
++		panic("ZEUS PMGR: PSCI CPU_ON cpu %u (MPIDR %llx) at %llx failed: %lld",
++		    cpu_id, mpidr, entry_pa, ret);
++	}
++}
++
++void
++ZeusPMGR::disableCPUCore(unsigned int /*cpu_id*/)
++{
++	/* the core powers itself off with PSCI CPU_OFF (arm64_prepare_for_sleep) */
++}
++
++void
++ZeusPMGR::enableCPUCluster(unsigned int /*cluster_id*/)
++{
++}
++
++void
++ZeusPMGR::disableCPUCluster(unsigned int /*cluster_id*/)
++{
++}
++
++void
++ZeusPMGR::initCPUIdle(ml_processor_info_t * /*info*/)
++{
++}
++
++void
++ZeusPMGR::enterCPUIdle(UInt64 *newIdleTimeoutTicks)
++{
++	if (newIdleTimeoutTicks != NULL) {
++		*newIdleTimeoutTicks = 0;
++	}
++}
++
++void
++ZeusPMGR::exitCPUIdle(UInt64 *newIdleTimeoutTicks)
++{
++	if (newIdleTimeoutTicks != NULL) {
++		*newIdleTimeoutTicks = 0;
++	}
++}
++
++void
++ZeusPMGR::updateCPUIdle(UInt64 *newIdleTimeoutTicks)
++{
++	if (newIdleTimeoutTicks != NULL) {
++		*newIdleTimeoutTicks = 0;
++	}
++}
++
++/* ---------------------------------------------------------------------- */
++
++class ZeusPlatformExpert : public IODTPlatformExpert {
++	OSDeclareDefaultStructors(ZeusPlatformExpert);
++
++public:
++	bool start(IOService *provider) APPLE_KEXT_OVERRIDE;
++	void processTopLevel(IORegistryEntry *root) APPLE_KEXT_OVERRIDE;
++	const char *deleteList(void) APPLE_KEXT_OVERRIDE;
++	const char *excludeList(void) APPLE_KEXT_OVERRIDE;
++	bool getTargetName(char *name, int maxLength) APPLE_KEXT_OVERRIDE;
++	bool getProductName(char *name, int maxLength) APPLE_KEXT_OVERRIDE;
++};
++
++OSDefineMetaClassAndStructors(ZeusPlatformExpert, IODTPlatformExpert);
++
++template <class T>
++static void
++zeus_start_child(IOService *parent)
++{
++	T *child = new T;
++	if (child == NULL || !child->init() || !child->attach(parent) || !child->start(parent)) {
++		panic("ZEUS: cannot start %s", T::metaClass->getClassName());
++	}
++	child->release();
++}
++
++bool
++ZeusPlatformExpert::start(IOService *provider)
++{
++	IOLog("ZEUS: starting device-tree platform expert\n");
++	if (!IODTPlatformExpert::start(provider)) {
++		return false;
++	}
++	zeus_start_child<ZeusGIC>(this);
++	zeus_start_child<ZeusPMGR>(this);
++	registerService();
++	IOLog("ZEUS: platform expert registered\n");
++	return true;
++}
++
++const char *
++ZeusPlatformExpert::deleteList(void)
++{
++	return "()";
++}
++
++const char *
++ZeusPlatformExpert::excludeList(void)
++{
++	return "('chosen', 'defaults', 'cpus', 'options')";
++}
++
++void
++ZeusPlatformExpert::processTopLevel(IORegistryEntry *root)
++{
++	/*
++	 * The stock implementation requires an Apple NVRAM /options node; zeus
++	 * has none. Publish the CPU nubs (AppleARMSMP matches them by "reg") and
++	 * the other top-level nodes.
++	 */
++	IORegistryEntry *cpus = root->childFromPath("cpus", gIODTPlane);
++	if (cpus != NULL) {
++		createNubs(this, IODTFindMatchingEntries(cpus, kIODTExclusive, NULL));
++		cpus->release();
++	}
++	createNubs(this, IODTFindMatchingEntries(root, kIODTExclusive, excludeList()));
++}
++
++bool
++ZeusPlatformExpert::getTargetName(char *name, int maxLength)
++{
++	if (name == NULL || maxLength <= 0) {
++		return false;
++	}
++	strlcpy(name, "D83AP", (size_t)maxLength);
++	return true;
++}
++
++bool
++ZeusPlatformExpert::getProductName(char *name, int maxLength)
++{
++	if (name == NULL || maxLength <= 0) {
++		return false;
++	}
++	strlcpy(name, "iPhone16,1", (size_t)maxLength);
++	return true;
++}
++#endif /* ARM64_BOARD_CONFIG_ZEUS */
+diff --git a/iokit/KernelConfigTables.cpp b/iokit/KernelConfigTables.cpp
+index 559a9db..9df6b36 100644
+--- a/iokit/KernelConfigTables.cpp
++++ b/iokit/KernelConfigTables.cpp
+@@ -34,6 +34,14 @@
+ 
+ const char * gIOKernelConfigTables =
+     "("
++#if defined(ARM64_BOARD_CONFIG_ZEUS)
++    "   {"
++    "     'IOClass'         = ZeusPlatformExpert;"
++    "     'IOProviderClass' = IOPlatformExpertDevice;"
++    "     'IONameMatch'     = 'xiaomi,zeus';"
++    "     'IOProbeScore'    = 10000:32;"
++    "   },"
++#endif
+     "   {"
+     "     'IOClass'         = IOPanicPlatform;"
+     "     'IOProviderClass' = IOPlatformExpertDevice;"
+diff --git a/iokit/conf/files.arm64 b/iokit/conf/files.arm64
+index f2aa835..c3b0457 100644
+--- a/iokit/conf/files.arm64
++++ b/iokit/conf/files.arm64
+@@ -6,3 +6,5 @@ iokit/Kernel/IOPMrootDomain.cpp    					optional iokitcpp
+ # SMP
+ iokit/Kernel/arm/AppleARMSMP.cpp    					optional iokitcpp
+ 
++# zeus platform expert, GIC IPIs, PSCI PMGR (empty unless ARM64_BOARD_CONFIG_ZEUS)
++iokit/Kernel/arm/ZeusPlatform.cpp    					optional iokitcpp

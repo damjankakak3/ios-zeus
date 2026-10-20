@@ -134,8 +134,13 @@
   vGIC does not deliver Group 0 to this VM. ZEUS: pe_init_fiq puts SGIs/PPIs in Group 1 (prio 0xA0, PPI 27 + SGI
   0-15 enabled), ICC_BPR1/PMR, GICD EnableGrp1A, ICC_IGRPEN1; sleh_irq -> zeus_gic_irq: IAR1, 27 = rtclock_intr,
   <16 = cpu_signal_handler, others counted; EOIR1. Without it the first timer wait would hang.
-- Next (0005): IOKit stand-ins so AppleARMSMP's cpu_boot_thread can finish (IOPlatformExpert = Zeus platform expert
-  from sweet 0016, interrupt controller under PassthruInterruptController, IOPMGR with PSCI CPU_ON via smc).
+- **0005 zeus-platform-expert-gic-pmgr (CI pending):** iokit/Kernel/arm/ZeusPlatform.cpp. AppleARMSMP's cpu_boot_thread
+  (USE_APPLEARMSMP) waits for an IOPlatformExpert, a child controller of PassthruInterruptController (gAIC) and an
+  IOPMGR; VMAPPLE gets them from closed kexts. ZeusPlatformExpert (sweet 0016, matched on 'xiaomi,zeus' in
+  KernelConfigTables) starts ZeusGIC (registers as IOInterruptController<gic phandle>, hooks into the Passthru
+  controller when it is published, sendIPI = ICC_SGI1R SGI 1) and ZeusPMGR (enableCPUCore = PSCI CPU_ON via smc,
+  idle hooks no-ops). mkadt: gic gets interrupt-controller + #interrupt-cells 1; cpus get interrupt-parent + 3
+  interrupts (aic_ipis path). First boot uses cpus=1.
   RUNTIME TODO: apple_arm64_common.h sets APPLE_ARM64_ARCH_FAMILY -> Apple sysreg accesses everywhere; each must be
   disabled for ZEUS before it runs on Cortex (sweet used a non-Apple-family config for this reason).
   RUNTIME TODO: with NO_CPU_OVRD, the CPU-off WFI path writes Apple S3_5_C15_C1_1 (IPI clear) -> UNDEF on Cortex.

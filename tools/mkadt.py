@@ -116,6 +116,10 @@ def build(d83ap=D83AP_ADT, seed=None, phys_base=PHYS_BASE, mem_size=MEM_SIZE):
         ('no-effaceable-storage', u32(1)),
     ])
 
+    # GIC: interrupt controller for the CPU nubs' IPI specifiers (xnu patch 0005
+    # ZeusGIC registers under IODTInterruptControllerName = its phandle).
+    gic_ph = next(phandles)
+
     cpu_nodes = []
     for i, (mpidr, compat, hz) in enumerate(CORES):
         cpu_nodes.append(node(f'cpu{i}', [
@@ -133,13 +137,17 @@ def build(d83ap=D83AP_ADT, seed=None, phys_base=PHYS_BASE, mem_size=MEM_SIZE):
             ('fixed-frequency', u32(TIMEBASE)),
             ('l2-cache-id', u32(i)),
             ('l3-cache-id', u32(0)),
+            # AppleARMSMP: three interrupts = legacy IPI layout (sources 0 and 2 are IPIs)
+            ('interrupt-parent', u32(gic_ph)),
+            ('interrupts', u32(1, 2, 3)),
         ]))
     cpus = node('cpus', [ph(), ('#address-cells', u32(1)), ('#size-cells', u32(0))], cpu_nodes)
 
     gic = node('gic', [
-        ph(),
+        ('AAPL,phandle', u32(gic_ph)),
         ('compatible', cstr('arm,gic-v3')),
-        ('interrupt-controller', b''),
+        ('interrupt-controller', cstr('GICv3')),
+        ('#interrupt-cells', u32(1)),
         ('virtual-timer-intid', u32(VTIMER_INTID)),
         ('reg', u64(GICD - SOC_BASE, GICD_SIZE, GICR - SOC_BASE, GICR_SIZE)),
     ])
