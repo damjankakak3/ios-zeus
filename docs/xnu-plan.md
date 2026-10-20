@@ -43,6 +43,38 @@ thread state, signal frames and exception handling.
 3. First goal: kernel printf reaches `logs/` over USB. Then interrupts, timer, 8 CPUs.
 4. Root over USB (block protocol on the same DWC3; PC serves the image). No UFS driver at all.
 
+## Loader design (next step after 0002 builds)
+
+XNU's entry contract (pexpert/pexpert/arm64/boot.h, osfmk/arm64/start.s): MMU off, x0 = physical address of a
+`boot_args` (Revision 2, Version 2): virtBase, physBase, memSize, topOfKernelData, Video (base, rowBytes, width,
+height, depth), machineType, deviceTreeP + deviceTreeLength (Apple device tree, ADT), CommandLine[608], bootFlags,
+memSizeActual. **XNU gets one contiguous RAM range: [physBase, physBase + memSize).**
+
+- **RAM for XNU: bank 0x900000000 + 0x180000000 (6 GB).** Fact: the live DT of probe 1 lists that bank, and every
+  static reserved region in the stock DT is below 4 GB (docs/zeus-hw.md). Guess: ABL/Gunyah reserve nothing
+  there. Check: dump the live DT /reserved-memory in the loader's log before jumping. Android's memory is not
+  touched by this (it is RAM only and the phone resets afterwards).
+- **boot.img:** kernel field = the loader (probe code base: USB log, display, DC CIVAC), ramdisk = a small
+  container {magic, kernel Mach-O, ADT, command line}. The loader finds the ramdisk via the live DT
+  /chosen linux,initrd-start/-end.
+- **Mach-O load:** kernel.development.zeus is a plain MH_EXECUTE (not a fileset kernelcache). virtBase = lowest
+  LC_SEGMENT_64 vmaddr (page aligned); copy each segment to physBase + (vmaddr - virtBase), zero-fill to vmsize;
+  entry = LC_UNIXTHREAD pc translated the same way. Then ADT, then boot_args, each 16 KB aligned;
+  topOfKernelData = end of boot_args.
+- **Caches:** clean every written line to PoC (DC CIVAC), then IC IALLU, DSB, ISB, MMU off, jump with x0.
+- **ADT:** built on the PC from the iPhone 11 (N104AP) device tree in the iOS 26 IPSW (Apple artifact: fetched
+  by the tool, never committed), with /chosen, /memory-map, 8 /cpus (MPIDR from the live DT), /arm-io with the GIC
+  (0x17100000, GICR stride 0x40000), arch timer (vtimer INTID 27), and our own nodes. Tool: `tools/mkadt.py`
+  (re-written, idea from sweet).
+- **Video:** the ABL splash framebuffer 0xb8000000, 1440x3200, rowBytes 5760, 32 bpp; it lies outside
+  [physBase, +memSize), so XNU must map it as device/WC memory. Open: check arm_vm_init for how Video.v_baseAddr
+  is mapped when it is not inside physBase's range.
+- **Console (patch 0003):** VMAPPLE's console is a PL011; zeus has none we can use. Port the probe's DWC3
+  CDC-ACM code into pexpert as a serial driver so kernel printf lands in `logs/` like the probe log.
+- Stop conditions for the first boot: panic/exception screen on the framebuffer (the loader keeps the probe's
+  exception handler until XNU installs VBAR) and PSCI SYSTEM_RESET after a timeout, so the phone always returns
+  to Android.
+
 ## Lessons from sweet that still apply (re-do for xnu-12377)
 
 Timer on Group 1 IRQ instead of FIQ; PSCI via SMC instead of HVC; no XPU carve-out mapped cacheable; built-in
