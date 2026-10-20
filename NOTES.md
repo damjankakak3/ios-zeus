@@ -73,6 +73,11 @@
   Run 39349482046 (v6): 1 error: pmap_phys_write_disable used before its static definition -> forward decl.
   Run 39352098696 (v7): no compile/link errors in the summary, only make[6] build_all Error 2 (non-compiler
   failure: suspect exports/symbol-set check) -> summary now prints 25 lines before each failed make step.
+  Run 39354666184: 'No rule to make target osfmk/arm64/amcc_rorgn_{ppl,ppl_amcc,common,pv_ctrr}.c' (listed in
+  files.arm64 for nos_arm_asm, never published). Fix: empty placeholder files + drop HAS_PARAVIRTUALIZED_CTRR from
+  ZEUS.h (no KTRR/CTRR on zeus; all rorgn_* uses are under KERNEL_INTEGRITY_* guards).
+  RUNTIME TODO: apple_arm64_common.h sets APPLE_ARM64_ARCH_FAMILY -> Apple sysreg accesses everywhere; each must be
+  disabled for ZEUS before it runs on Cortex (sweet used a non-Apple-family config for this reason).
   RUNTIME TODO: with NO_CPU_OVRD, the CPU-off WFI path writes Apple S3_5_C15_C1_1 (IPI clear) -> UNDEF on Cortex.
   Also noted: kernel is built with -DXNU_TARGET_OS_OSX / PLATFORM MacOSX (sweet did the same and ran iOS userland). Plan + source findings: `docs/xnu-plan.md` (VMAPPLE = no
   PPL/SPTM, GICv3, paravirtual PAC hooks -> fixed standard PAC keys on zeus; drop SME; GICR stride 0x40000).

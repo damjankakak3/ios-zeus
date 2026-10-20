@@ -234,6 +234,50 @@ index 19e7e67..cbd71c2 100644
  MARK_AS_PMAP_TEXT static inline void
  pmap_cs_lockdown_pages(vm_address_t kva, vm_size_t size, bool ppl_writable)
  {
+diff --git a/osfmk/arm64/amcc_rorgn_common.c b/osfmk/arm64/amcc_rorgn_common.c
+new file mode 100644
+index 0000000..3e256d5
+--- /dev/null
++++ b/osfmk/arm64/amcc_rorgn_common.c
+@@ -0,0 +1,5 @@
++/*
++ * Placeholder: Apple has not published amcc_rorgn_common.c. osfmk/conf/files.arm64 lists it
++ * for nos_arm_asm builds; machine configs built from source here (ZEUS) have
++ * no KTRR/CTRR read-only region, so nothing is needed.
++ */
+diff --git a/osfmk/arm64/amcc_rorgn_ppl.c b/osfmk/arm64/amcc_rorgn_ppl.c
+new file mode 100644
+index 0000000..bf818e1
+--- /dev/null
++++ b/osfmk/arm64/amcc_rorgn_ppl.c
+@@ -0,0 +1,5 @@
++/*
++ * Placeholder: Apple has not published amcc_rorgn_ppl.c. osfmk/conf/files.arm64 lists it
++ * for nos_arm_asm builds; machine configs built from source here (ZEUS) have
++ * no KTRR/CTRR read-only region, so nothing is needed.
++ */
+diff --git a/osfmk/arm64/amcc_rorgn_ppl_amcc.c b/osfmk/arm64/amcc_rorgn_ppl_amcc.c
+new file mode 100644
+index 0000000..a4b39ee
+--- /dev/null
++++ b/osfmk/arm64/amcc_rorgn_ppl_amcc.c
+@@ -0,0 +1,5 @@
++/*
++ * Placeholder: Apple has not published amcc_rorgn_ppl_amcc.c. osfmk/conf/files.arm64 lists it
++ * for nos_arm_asm builds; machine configs built from source here (ZEUS) have
++ * no KTRR/CTRR read-only region, so nothing is needed.
++ */
+diff --git a/osfmk/arm64/amcc_rorgn_pv_ctrr.c b/osfmk/arm64/amcc_rorgn_pv_ctrr.c
+new file mode 100644
+index 0000000..d796a2a
+--- /dev/null
++++ b/osfmk/arm64/amcc_rorgn_pv_ctrr.c
+@@ -0,0 +1,5 @@
++/*
++ * Placeholder: Apple has not published amcc_rorgn_pv_ctrr.c. osfmk/conf/files.arm64 lists it
++ * for nos_arm_asm builds; machine configs built from source here (ZEUS) have
++ * no KTRR/CTRR read-only region, so nothing is needed.
++ */
 diff --git a/osfmk/arm64/tunables/tunables.s b/osfmk/arm64/tunables/tunables.s
 new file mode 100644
 index 0000000..7169775
@@ -262,7 +306,7 @@ index 75938b5..9a80c67 100644
  # Headers installed into System.framework/PrivateHeaders (userspace internal SDK only).
 diff --git a/pexpert/pexpert/arm64/ZEUS.h b/pexpert/pexpert/arm64/ZEUS.h
 new file mode 100644
-index 0000000..f80a813
+index 0000000..c63448f
 --- /dev/null
 +++ b/pexpert/pexpert/arm64/ZEUS.h
 @@ -0,0 +1,101 @@
@@ -311,7 +355,7 @@ index 0000000..f80a813
 +#define CPMU_PMC_COUNT            10
 +#define NO_MONITOR                1
 +#define NO_ECORE                  1
-+#define HAS_PARAVIRTUALIZED_CTRR  1
++/* no HAS_PARAVIRTUALIZED_CTRR: no hypervisor- or hardware-enforced read-only kernel region on zeus */
 +
 +#define VMAPPLE                   1
 +#define APPLEVIRTUALPLATFORM      1
