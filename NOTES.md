@@ -129,6 +129,13 @@
     2026-10-20: all checks ok (boot_args fields, segment copy, zero fill, ADT, x0).
   - Runner: `python3 tools/zeus-probe.py --xnu xnu-kernel.zip` (CI artifact zip or kernelcache file).
   - Blocked: publishing the KC as a public GitHub release (auto-mode denied "public surface"); user decides.
+- **0004 zeus-gic-group1-irq (CI pending):** VMAPPLE takes the vtimer (PPI 27) as a Group 0 FIQ and sends every
+  other IRQ to gCPUIC (only exists with the closed kexts). Guess (sweet's lesson + Linux uses Group 1 only): Gunyah's
+  vGIC does not deliver Group 0 to this VM. ZEUS: pe_init_fiq puts SGIs/PPIs in Group 1 (prio 0xA0, PPI 27 + SGI
+  0-15 enabled), ICC_BPR1/PMR, GICD EnableGrp1A, ICC_IGRPEN1; sleh_irq -> zeus_gic_irq: IAR1, 27 = rtclock_intr,
+  <16 = cpu_signal_handler, others counted; EOIR1. Without it the first timer wait would hang.
+- Next (0005): IOKit stand-ins so AppleARMSMP's cpu_boot_thread can finish (IOPlatformExpert = Zeus platform expert
+  from sweet 0016, interrupt controller under PassthruInterruptController, IOPMGR with PSCI CPU_ON via smc).
   RUNTIME TODO: apple_arm64_common.h sets APPLE_ARM64_ARCH_FAMILY -> Apple sysreg accesses everywhere; each must be
   disabled for ZEUS before it runs on Cortex (sweet used a non-Apple-family config for this reason).
   RUNTIME TODO: with NO_CPU_OVRD, the CPU-off WFI path writes Apple S3_5_C15_C1_1 (IPI clear) -> UNDEF on Cortex.

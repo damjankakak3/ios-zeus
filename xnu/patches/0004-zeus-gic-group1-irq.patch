@@ -1,0 +1,158 @@
+diff --git a/osfmk/arm64/sleh.c b/osfmk/arm64/sleh.c
+index 0554aa8..3c6e72b 100644
+--- a/osfmk/arm64/sleh.c
++++ b/osfmk/arm64/sleh.c
+@@ -280,6 +280,8 @@ extern void arm64_thread_exception_return(void) __dead2;
+ #if defined(HAS_IPI)
+ void cpu_signal_handler(void);
+ extern unsigned int gFastIPI;
++#elif defined(ARM64_BOARD_CONFIG_ZEUS)
++void cpu_signal_handler(void);
+ #endif /* defined(HAS_IPI) */
+ 
+ static arm_saved_state64_t *original_faulting_state = NULL;
+@@ -2999,6 +3001,44 @@ handle_simd_trap(arm_saved_state_t *state, uint64_t esr)
+ 	__builtin_unreachable();
+ }
+ 
++#if defined(ARM64_BOARD_CONFIG_ZEUS)
++/*
++ * zeus: Group 1 GICv3 interrupts straight from the CPU interface. The
++ * virtual timer and SGIs (IPIs) are handled here; peripheral interrupts
++ * have no drivers yet and are only counted.
++ */
++static uint64_t zeus_unhandled_irqs;
++
++static void
++zeus_gic_irq(arm_saved_state_t *state)
++{
++	cpu_data_t *cdp = getCpuDatap();
++	uint32_t intid = (uint32_t)(__builtin_arm_rsr64("ICC_IAR1_EL1") & 0xffffff);
++
++	if (intid >= 1020 && intid <= 1023) {
++		return; /* spurious: nothing to acknowledge */
++	}
++	if (intid == ZEUS_VTIMER_INTID) {
++		sleh_interrupt_handler_prologue(state, DBG_INTR_TYPE_TIMER);
++		cdp->cpu_decrementer = -1; /* Large */
++		ml_interrupt_masked_debug_start(rtclock_intr, DBG_INTR_TYPE_TIMER);
++		rtclock_intr(TRUE);
++		ml_interrupt_masked_debug_end();
++	} else if (intid < 16) {
++		sleh_interrupt_handler_prologue(state, DBG_INTR_TYPE_IPI);
++		cpu_signal_handler();
++	} else {
++		sleh_interrupt_handler_prologue(state, DBG_INTR_TYPE_OTHER);
++		zeus_unhandled_irqs++;
++	}
++	__builtin_arm_wsr64("ICC_EOIR1_EL1", intid);
++	__builtin_arm_isb(ISB_SY);
++
++	entropy_collect();
++	sleh_interrupt_handler_epilogue();
++}
++#endif /* ARM64_BOARD_CONFIG_ZEUS */
++
+ void
+ sleh_irq(arm_saved_state_t *state)
+ {
+@@ -3007,7 +3047,9 @@ sleh_irq(arm_saved_state_t *state)
+ 	int preemption_level = sleh_get_preemption_level();
+ #endif
+ 
+-
++#if defined(ARM64_BOARD_CONFIG_ZEUS)
++	zeus_gic_irq(state);
++#else
+ 	sleh_interrupt_handler_prologue(state, DBG_INTR_TYPE_OTHER);
+ 
+ #if USE_APPLEARMSMP
+@@ -3024,6 +3066,7 @@ sleh_irq(arm_saved_state_t *state)
+ 
+ 
+ 	sleh_interrupt_handler_epilogue();
++#endif /* ARM64_BOARD_CONFIG_ZEUS */
+ #if MACH_ASSERT
+ 	if (preemption_level != sleh_get_preemption_level()) {
+ 		panic("irq handler %p changed preemption level from %d to %d", cdp->interrupt_handler, preemption_level, sleh_get_preemption_level());
+diff --git a/pexpert/arm/pe_fiq.c b/pexpert/arm/pe_fiq.c
+index 3ad743f..aee592e 100644
+--- a/pexpert/arm/pe_fiq.c
++++ b/pexpert/arm/pe_fiq.c
+@@ -141,11 +141,20 @@ pe_init_fiq()
+ 		}
+ 	}
+ 
++#if defined(ARM64_BOARD_CONFIG_ZEUS)
++	// zeus: all SGIs and PPIs in Group 1; vtimer and SGIs enabled
++	gicr_write32(GICR_IGROUPR0, 0xFFFFFFFF);
++	for (unsigned int i = 0; i < 32; i += 4) {
++		gicr_write32(GICR_IPRIORITYR0 + i, 0xA0A0A0A0);
++	}
++	gicr_write32(GICR_ISENABLER0, (1U << ZEUS_VTIMER_INTID) | 0xFFFFU);
++#else
+ 	// Configure timers and legacy FIQ to be group 0
+ 	gicr_write32(GICR_IGROUPR0, 0x81FFFFFF);
+ 
+ 	// Enable PPI 27
+ 	gicr_write32(GICR_ISENABLER0, (1 << 27));
++#endif
+ 
+ 	// Enable system register access
+ 	uint64_t icc_sre = __builtin_arm_rsr64("ICC_SRE_EL1");
+@@ -153,21 +162,35 @@ pe_init_fiq()
+ 	__builtin_arm_wsr64("ICC_SRE_EL1", icc_sre);
+ 	__builtin_arm_isb(ISB_SY);
+ 
++#if defined(ARM64_BOARD_CONFIG_ZEUS)
++	__builtin_arm_wsr64("ICC_BPR1_EL1", 0);
++	__builtin_arm_wsr64("ICC_PMR_EL1", 0xFF);
++#else
+ 	// Set priority masks and binary point for group 0
+ 	__builtin_arm_wsr64("ICC_BPR0_EL1", 0);
+ 	__builtin_arm_wsr64("ICC_PMR_EL1", 0xFF);
++#endif
+ 
+ 	// Set EOI mode of this processor
+ 	uint64_t icc_ctlr = __builtin_arm_rsr64("ICC_CTLR_EL1");
+ 	icc_ctlr &= ~ICC_CTLR_EOIMODE;
+ 	__builtin_arm_wsr64("ICC_CTLR_EL1", icc_ctlr);
+ 
++#if defined(ARM64_BOARD_CONFIG_ZEUS)
++	uint32_t gicd_ctlr = gicd_read32(GICD_CTLR);
++	if (!(gicd_ctlr & GICD_CTLR_ENABLEGRP1A)) {
++		gicd_write32(GICD_CTLR, gicd_ctlr | GICD_CTLR_ENABLEGRP1A);
++	}
++	__builtin_arm_wsr64("ICC_IGRPEN1_EL1", 1);
++	__builtin_arm_isb(ISB_SY);
++#else
+ 	// Enable the forwarding of the vtimer interrupt
+ 	uint32_t gicd_ctlr = gicd_read32(GICD_CTLR);
+ 	gicd_ctlr |= GICD_CTLR_ENABLEGRP0;
+ 	gicd_write32(GICD_CTLR, gicd_ctlr);
+ 	__builtin_arm_wsr64("ICC_IGRPEN0_EL1", 1);
+ 	__builtin_arm_isb(ISB_SY);
++#endif
+ }
+ #else
+ void
+diff --git a/pexpert/pexpert/arm64/ZEUS.h b/pexpert/pexpert/arm64/ZEUS.h
+index 2c8005a..a72af67 100644
+--- a/pexpert/pexpert/arm64/ZEUS.h
++++ b/pexpert/pexpert/arm64/ZEUS.h
+@@ -101,6 +101,15 @@
+ #define ICC_CTLR_EOIMODE                        0x1
+ 
+ #define ICC_SRE_SRE                             0x1
++
++/*
++ * zeus (patch 0004): Gunyah gives this VM a GICv3 with Group 1 only, as Linux
++ * uses it. The virtual timer and SGIs are Group 1 IRQs handled in sleh_irq,
++ * not Group 0 FIQs as on VMAPPLE.
++ */
++#define ZEUS_VTIMER_INTID                       27
++#define GICR_IPRIORITYR0                        0x10400
++#define GICD_CTLR_ENABLEGRP1A                   0x2
+ /* End of GICv3 register definitions */
+ 
+ #endif /* ! _PEXPERT_ARM64_ZEUS_H */
