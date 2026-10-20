@@ -173,7 +173,7 @@ index e37762b..067636a 100644
  endif
  
 diff --git a/osfmk/arm/pmap/pmap.c b/osfmk/arm/pmap/pmap.c
-index 19e7e67..cbd71c2 100644
+index 19e7e67..fc703c1 100644
 --- a/osfmk/arm/pmap/pmap.c
 +++ b/osfmk/arm/pmap/pmap.c
 @@ -84,8 +84,22 @@
@@ -209,7 +209,7 @@ index 19e7e67..cbd71c2 100644
  
  	/**
  	 * Don't make any assumptions about the alignment of avail_start before this
-@@ -12237,6 +12253,24 @@ pmap_unpin_kernel_pages(vm_offset_t kva __unused, size_t nbytes __unused)
+@@ -12237,6 +12253,33 @@ pmap_unpin_kernel_pages(vm_offset_t kva __unused, size_t nbytes __unused)
  #endif /* !XNU_MONITOR */
  
  
@@ -230,6 +230,15 @@ index 19e7e67..cbd71c2 100644
 +{
 +}
 +#endif /* ARM64_BOARD_CONFIG_ZEUS && !XNU_MONITOR */
++
++#if defined(ARM64_BOARD_CONFIG_ZEUS) && SCHED_HYGIENE_DEBUG && (DEVELOPMENT || DEBUG)
++/* ZEUS: the out-of-line version is closed; skip the hygiene bookkeeping. */
++bool
++pmap_pending_preemption(void)
++{
++	return _pmap_pending_preemption_real();
++}
++#endif /* ARM64_BOARD_CONFIG_ZEUS && SCHED_HYGIENE_DEBUG && (DEVELOPMENT || DEBUG) */
 +
  MARK_AS_PMAP_TEXT static inline void
  pmap_cs_lockdown_pages(vm_address_t kva, vm_size_t size, bool ppl_writable)
@@ -278,6 +287,60 @@ index 0000000..d796a2a
 + * for nos_arm_asm builds; machine configs built from source here (ZEUS) have
 + * no KTRR/CTRR read-only region, so nothing is needed.
 + */
+diff --git a/osfmk/arm64/caches_asm.s b/osfmk/arm64/caches_asm.s
+index 1588830..89b2f09 100644
+--- a/osfmk/arm64/caches_asm.s
++++ b/osfmk/arm64/caches_asm.s
+@@ -481,4 +481,24 @@ Lcall_invalidate_worker:
+ 	b		EXT(InvalidatePoU_IcacheRegion)
+ 
+ 
++#if defined(ARM64_BOARD_CONFIG_ZEUS)
++/*
++ * ZEUS: Apple's _nopreempt variants live in the closed KDK library. Standard
++ * ARM cores have no HID chicken bits to toggle, so both are a plain clean to PoC.
++ */
++	.text
++	.align 2
++	.globl EXT(CleanPoC_DcacheRegion_Force_nopreempt)
++LEXT(CleanPoC_DcacheRegion_Force_nopreempt)
++	ARM64_PROLOG
++	b		EXT(CleanPoC_DcacheRegion_internal)
++
++	.text
++	.align 2
++	.globl EXT(CleanPoC_DcacheRegion_Force_nopreempt_nohid)
++LEXT(CleanPoC_DcacheRegion_Force_nopreempt_nohid)
++	ARM64_PROLOG
++	b		EXT(CleanPoC_DcacheRegion_internal)
++#endif /* ARM64_BOARD_CONFIG_ZEUS */
++
+ /* vim: set ts=4: */
+diff --git a/osfmk/arm64/machine_routines.c b/osfmk/arm64/machine_routines.c
+index 07143d5..56309e9 100644
+--- a/osfmk/arm64/machine_routines.c
++++ b/osfmk/arm64/machine_routines.c
+@@ -3406,3 +3406,20 @@ ml_unsafe_kernel_text(void)
+ 	return false;
+ }
+ #endif /* DEVELOPMENT || DEBUG || CONFIG_DTRACE || CONFIG_CSR_FROM_DT */
++
++#if defined(ARM64_BOARD_CONFIG_ZEUS)
++/* ZEUS: these come from Apple's closed machine_routines code. */
++
++/* No PPL/SPTM monitor on ZEUS. */
++void
++ml_enable_monitor(void)
++{
++}
++
++/* Never an Apple production-fused device. */
++boolean_t
++ml_device_is_prod_fused(void)
++{
++	return FALSE;
++}
++#endif /* ARM64_BOARD_CONFIG_ZEUS */
 diff --git a/osfmk/arm64/tunables/tunables.s b/osfmk/arm64/tunables/tunables.s
 new file mode 100644
 index 0000000..7169775

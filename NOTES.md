@@ -76,6 +76,11 @@
   Run 39354666184: 'No rule to make target osfmk/arm64/amcc_rorgn_{ppl,ppl_amcc,common,pv_ctrr}.c' (listed in
   files.arm64 for nos_arm_asm, never published). Fix: empty placeholder files + drop HAS_PARAVIRTUALIZED_CTRR from
   ZEUS.h (no KTRR/CTRR on zeus; all rorgn_* uses are under KERNEL_INTEGRITY_* guards).
+  Run 39357184943 (1809227): EVERYTHING COMPILES. Final link of kernel.development.zeus fails, undefined (closed
+  KDK symbols): CleanPoC_DcacheRegion_Force_nopreempt(_nohid), ml_device_is_prod_fused, ml_enable_monitor,
+  pmap_pending_preemption (out-of-line in DEVELOPMENT + SCHED_HYGIENE_DEBUG). Fix (0001 v10): ZEUS-only versions in
+  caches_asm.s (branch to CleanPoC_DcacheRegion_internal), machine_routines.c (no-op / FALSE), pmap.c
+  (= _pmap_pending_preemption_real). Guess: the summary list may have been truncated; next run will tell.
   RUNTIME TODO: apple_arm64_common.h sets APPLE_ARM64_ARCH_FAMILY -> Apple sysreg accesses everywhere; each must be
   disabled for ZEUS before it runs on Cortex (sweet used a non-Apple-family config for this reason).
   RUNTIME TODO: with NO_CPU_OVRD, the CPU-off WFI path writes Apple S3_5_C15_C1_1 (IPI clear) -> UNDEF on Cortex.
