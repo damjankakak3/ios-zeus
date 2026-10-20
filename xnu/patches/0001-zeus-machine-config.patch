@@ -172,6 +172,43 @@ index e37762b..067636a 100644
          LDFLAGS_KERNEL_ONLY += -rdynamic -Wl,-force_load,$(KDKROOT)/System/Library/KernelSupport/lib$(CURRENT_MACHINE_CONFIG).os.$(CURRENT_KERNEL_CONFIG).a
  endif
  
+diff --git a/osfmk/arm/pmap/pmap.c b/osfmk/arm/pmap/pmap.c
+index 19e7e67..d0877fa 100644
+--- a/osfmk/arm/pmap/pmap.c
++++ b/osfmk/arm/pmap/pmap.c
+@@ -84,8 +84,10 @@
+ 
+ #include <arm64/proc_reg.h>
+ #include <pexpert/arm64/boot.h>
++#if !defined(ARM64_BOARD_CONFIG_ZEUS)   /* Apple SART/UAT: headers not published */
+ #include <arm64/ppl/sart.h>
+ #include <arm64/ppl/uat.h>
++#endif
+ 
+ #if defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR) || defined(KERNEL_INTEGRITY_PV_CTRR)
+ #include <arm64/amcc_rorgn.h>
+@@ -2334,7 +2336,9 @@ pmap_bootstrap(
+ 	/**
+ 	 * Bootstrap any necessary SART data structures and values needed from the device tree.
+ 	 */
++#if !defined(ARM64_BOARD_CONFIG_ZEUS)
+ 	sart_bootstrap();
++#endif
+ 
+ 	/**
+ 	 * Don't make any assumptions about the alignment of avail_start before this
+diff --git a/osfmk/arm64/tunables/tunables.s b/osfmk/arm64/tunables/tunables.s
+new file mode 100644
+index 0000000..7169775
+--- /dev/null
++++ b/osfmk/arm64/tunables/tunables.s
+@@ -0,0 +1,6 @@
++/*
++ * Per-SoC CPU tunables. Apple's real file is not published; machine
++ * configs built from source here (ZEUS) have no Apple core tunables.
++ */
++.macro APPLY_TUNABLES reg0, reg1, reg2
++.endmacro
 diff --git a/pexpert/pexpert/arm64/Makefile b/pexpert/pexpert/arm64/Makefile
 index 75938b5..9a80c67 100644
 --- a/pexpert/pexpert/arm64/Makefile
@@ -294,10 +331,10 @@ index 0000000..f80a813
 +
 +#endif /* ! _PEXPERT_ARM64_ZEUS_H */
 diff --git a/pexpert/pexpert/arm64/board_config.h b/pexpert/pexpert/arm64/board_config.h
-index 5a6cd33..53927f7 100644
+index 5a6cd33..5c500b0 100644
 --- a/pexpert/pexpert/arm64/board_config.h
 +++ b/pexpert/pexpert/arm64/board_config.h
-@@ -318,6 +318,18 @@
+@@ -318,6 +318,19 @@
  
  #endif  /* ARM64_BOARD_CONFIG_VMAPPLE */
  
@@ -311,6 +348,7 @@ index 5a6cd33..53927f7 100644
 +#define USE_APPLEARMSMP                1
 +
 +#define NO_XNU_PLATFORM_ERROR_HANDLER  1
++#define NO_CPU_OVRD                    1 /* Apple CPU_OVRD does not exist on Cortex */
 +#endif  /* ARM64_BOARD_CONFIG_ZEUS */
 +
  

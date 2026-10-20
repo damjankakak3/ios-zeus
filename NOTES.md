@@ -65,6 +65,10 @@
   The SOURCE is in the public tree, gated by options nos_arm_asm / nos_arm_pmap (osfmk/conf/files.arm64), which
   Apple's configs leave off. 0001 v4 adds config/MASTER.arm64.zeus.MacOSX (doconf picks MASTER.<cpu>.<soc>.<platform>
   first) = MacOSX config + `nos_arm_asm nos_arm_pmap` in ARM_EXTRAS_BASE, CPU_COUNTERS_BASE empty (no Apple CPMU).
+  Run 39343976704 (0001 v4): only 3 errors: start.s needs arm64/tunables/tunables.s (unpublished -> empty
+  APPLY_TUNABLES macro), machine_routines_asm.s CPU_OVRD (Apple reg -> NO_CPU_OVRD in the ZEUS board config, like
+  other Apple SoCs), pmap.c includes arm64/ppl/sart.h + uat.h (unpublished -> skipped with sart_bootstrap for ZEUS).
+  RUNTIME TODO: with NO_CPU_OVRD, the CPU-off WFI path writes Apple S3_5_C15_C1_1 (IPI clear) -> UNDEF on Cortex.
   Also noted: kernel is built with -DXNU_TARGET_OS_OSX / PLATFORM MacOSX (sweet did the same and ran iOS userland). Plan + source findings: `docs/xnu-plan.md` (VMAPPLE = no
   PPL/SPTM, GICv3, paravirtual PAC hooks -> fixed standard PAC keys on zeus; drop SME; GICR stride 0x40000).
 - Probe 2 details: `shim/usb.c` = CDC-ACM USB serial log (port of sweet
