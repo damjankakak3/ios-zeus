@@ -81,6 +81,11 @@
   pmap_pending_preemption (out-of-line in DEVELOPMENT + SCHED_HYGIENE_DEBUG). Fix (0001 v10): ZEUS-only versions in
   caches_asm.s (branch to CleanPoC_DcacheRegion_internal), machine_routines.c (no-op / FALSE), pmap.c
   (= _pmap_pending_preemption_real). Guess: the summary list may have been truncated; next run will tell.
+  Run 39359821848 (eafdefe): **kernel.development.zeus LINKS** (fact: config/allsymbols is made from it and its
+  dSYM was installed). Failed only at config check_all_exports / Private.symbolset: 67 exported names from closed
+  code (IOUnifiedAddressTranslator, pmap_iommu_*, sart/nvme/t*dart/sptm_gen3dart/uat descs, pmap_cs_configuration,
+  pmap_has_iofilter_protected_write). Fix (0001 v11): config/ZEUS.unexported + config/Makefile filters the export
+  lists into config/zeus-exports/ for ZEUS only. Next: artifact should contain kernel.development.zeus -> 0002.
   RUNTIME TODO: apple_arm64_common.h sets APPLE_ARM64_ARCH_FAMILY -> Apple sysreg accesses everywhere; each must be
   disabled for ZEUS before it runs on Cortex (sweet used a non-Apple-family config for this reason).
   RUNTIME TODO: with NO_CPU_OVRD, the CPU-off WFI path writes Apple S3_5_C15_C1_1 (IPI clear) -> UNDEF on Cortex.
