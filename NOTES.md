@@ -113,6 +113,22 @@
   **Fact (source): a plain MH_EXECUTE arm64e kernel never signs its auth pointers** (arm_slide_rebase_and_sign_image
   only rebases/signs a MH_FILESET KC or a static kernelcache). Sweet avoided this with a non-PAC kernel. So CI now
   builds a kernel-only boot KC: `kmutil create -a arm64e -n boot -x -k kernel ...` -> out/kernelcache.development.zeus.
+- **XNU boot chain (written 2026-10-20, QEMU-tested, NOT run on the phone yet):**
+  - `shim/loader.c` (port of sweet shim/loader.c) inside probe 5 (`prebuilt/zeus-probe5.img`): after the probe 4
+    checks + PAC test, if the ramdisk holds a ZEUSXNU1 payload: finds it via the trailer at initrd-end (ABL puts
+    our ramdisk after the vendor_boot one; start may be unaligned), checks xnu RAM is inside one live /memory bank,
+    hits no /reserved-memory child and not loader/DTB/ramdisk/fb, requires MPIDR core 0, gives the USB log 10 s,
+    disconnects USB, DC CIVAC on the destination, copies segments + ADT, writes boot_args (Rev/Ver 2, Video = splash
+    fb), IC IALLU, jumps with x0 = boot_args PA. Any failed check: reason on screen + USB, nothing written, reset.
+  - `tools/mkadt.py` (port of sweet's): zeus GIC/timer/8 CPUs (cpu0 "running"), RAM 0x900000000 + 6 GB,
+    /defaults serial-device -> zeus-fbcon node, identity D83AP / iPhone16,1, chip-id 0x8130, /product from the
+    real D83AP tree if research/ipsw/d83ap.adt exists (optional).
+  - `tools/mkpayload.py`: MH_FILESET only (refuses MH_EXECUTE), entry = com.apple.kernel LC_UNIXTHREAD,
+    virt_base = 32 MB block of the KC header, trailer {size, "ZEUSEND1"}.
+  - `tools/qemu-loader-test.py`: fake fileset kernel in QEMU virt, payload at an odd ramdisk offset. Result
+    2026-10-20: all checks ok (boot_args fields, segment copy, zero fill, ADT, x0).
+  - Runner: `python3 tools/zeus-probe.py --xnu xnu-kernel.zip` (CI artifact zip or kernelcache file).
+  - Blocked: publishing the KC as a public GitHub release (auto-mode denied "public surface"); user decides.
   RUNTIME TODO: apple_arm64_common.h sets APPLE_ARM64_ARCH_FAMILY -> Apple sysreg accesses everywhere; each must be
   disabled for ZEUS before it runs on Cortex (sweet used a non-Apple-family config for this reason).
   RUNTIME TODO: with NO_CPU_OVRD, the CPU-off WFI path writes Apple S3_5_C15_C1_1 (IPI clear) -> UNDEF on Cortex.

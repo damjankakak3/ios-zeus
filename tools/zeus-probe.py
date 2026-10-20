@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """ios-zeus probe runner: boot the probe on zeus and capture its log. No questions.
 
-  python3 tools/zeus-probe.py [--probe 1|2|3|4]     (from the repo root, after git pull)
+  python3 tools/zeus-probe.py [--probe 1-5]          (from the repo root, after git pull)
+  python3 tools/zeus-probe.py --xnu xnu-kernel.zip   boot the ZEUS xnu (CI artifact zip or kernelcache)
 
-  1. Builds shim/out/zeus-probe4.img if clang + ld.lld exist, else uses prebuilt/.
+  1. Builds shim/out/zeus-probe5.img if clang + ld.lld exist, else uses prebuilt/.
+     With --xnu: also builds the ADT (tools/mkadt.py) and the payload
+     (tools/mkpayload.py) and puts them in the boot image's ramdisk; the probe
+     then runs its checks and jumps to xnu (shim/loader.c).
   2. Finds the phone: exactly one fastboot device, or one adb device which it
      reboots into fastboot. Stops unless product = zeus and unlocked = yes.
   3. `fastboot boot` (RAM only, nothing is flashed).
@@ -19,7 +23,7 @@ Safety: the only phone commands this script can run are listed in ALLOWED.
 import argparse, datetime, glob, hashlib, os, re, shutil, subprocess, sys, termios, time, tty
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-LATEST = 4	# shim/ builds this probe; older ones run from prebuilt/
+LATEST = 5	# shim/ builds this probe; older ones run from prebuilt/
 
 # argv patterns this script may send to the phone (None = any). Nothing that writes flash.
 ALLOWED = [
@@ -113,7 +117,49 @@ def get_image():
         log(f"note: differs from prebuilt {want[:16]}... (other compiler version)")
     if data[:8] != b"ANDROID!":
         finish(1, "not a boot image, stopping")
+    if ARGS.xnu:
+        img = xnu_image(data)
     return img
+
+
+def xnu_image(probe_img):
+    """Loader boot image with the xnu payload as ramdisk (shim/out/zeus-xnu.img)."""
+    import struct, zipfile
+    sys.path.insert(0, os.path.join(ROOT, "tools"))
+    import mkpayload
+    src = ARGS.xnu
+    kc = os.path.join(ROOT, "shim", "out", "kernelcache.zeus")
+    os.makedirs(os.path.dirname(kc), exist_ok=True)
+    if zipfile.is_zipfile(src):
+        with zipfile.ZipFile(src) as z:
+            names = [n for n in z.namelist() if os.path.basename(n).startswith("kernelcache.")]
+            if not names:
+                finish(1, f"{src}: no kernelcache.* inside (the CI kernel-collection step failed?)")
+            open(kc, "wb").write(z.read(names[0]))
+            log(f"kernel collection {names[0]} from {src}")
+    else:
+        shutil.copyfile(src, kc)
+    log(f"kernelcache sha256 {hashlib.sha256(open(kc, 'rb').read()).hexdigest()}")
+    adt = os.path.join(ROOT, "shim", "out", "zeus.adt")
+    r = subprocess.run([sys.executable, os.path.join(ROOT, "tools", "mkadt.py"), adt], capture_output=True, text=True)
+    log("mkadt: " + (r.stdout + r.stderr).strip())
+    if r.returncode:
+        finish(1, "mkadt failed")
+    try:
+        payload, info = mkpayload.build(kc, adt, ARGS.cmdline)
+    except (AssertionError, SystemExit) as e:
+        finish(1, f"mkpayload: {e}")
+    for k, v in info.items():
+        log(f"payload {k}: {v}")
+    ksize = struct.unpack_from("<I", probe_img, 8)[0]
+    kernel = os.path.join(ROOT, "shim", "out", "loader.Image")
+    open(kernel, "wb").write(probe_img[4096:4096 + ksize])
+    rd = os.path.join(ROOT, "shim", "out", "xnu-payload.bin")
+    open(rd, "wb").write(payload)
+    out = os.path.join(ROOT, "shim", "out", "zeus-xnu.img")
+    subprocess.run([sys.executable, os.path.join(ROOT, "tools", "mkbootimg4.py"), kernel, out, "--ramdisk", rd], check=True)
+    log(f"boot image {os.path.relpath(out, ROOT)} {os.path.getsize(out)} bytes")
+    return out
 
 
 def find_probe_tty():
@@ -222,7 +268,12 @@ def main():
     rc, out = run(["fastboot", "-s", sn, "boot", img], timeout=90)
     if rc != 0:
         finish(1, "fastboot boot failed (see above). Nothing was changed on the phone")
-    log("probe is running on the phone (resets by itself after ~120 s)")
+    if ARGS.xnu:
+        log("loader is running: checks, ~10 s of USB log, then it jumps to xnu.")
+        log("xnu draws 'ZEUS n: ...' lines and a progress bar on the screen. Photo the screen when it stops.")
+        log("xnu does NOT reset the phone by itself: when the screen stops changing, hold Power ~15 s; Android boots normally.")
+    else:
+        log("probe is running on the phone (resets by itself after ~120 s)")
 
     if ARGS.probe >= 2:
         capture_serial(t_boot + 130, t_boot + 200)
@@ -242,8 +293,12 @@ def main():
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--probe", type=int, choices=(1, 2, 3, 4), default=4)
+    ap.add_argument("--probe", type=int, choices=(1, 2, 3, 4, 5), default=LATEST)
+    ap.add_argument("--xnu", metavar="ZIP_OR_KC", help="boot xnu: CI artifact xnu-kernel.zip or a kernelcache file")
+    ap.add_argument("--cmdline", default="debug=0x14e cpus=1 keepsyms=1 serial=3", help="xnu boot-args (with --xnu)")
     ARGS = ap.parse_args()
+    if ARGS.xnu and ARGS.probe != LATEST:
+        ap.error(f"--xnu needs probe {LATEST}")
     PHONE_LOG = os.path.join(ROOT, "logs", f"probe{ARGS.probe}-{STAMP}-phone.txt")
     os.makedirs(os.path.join(ROOT, "logs"), exist_ok=True)
     main()

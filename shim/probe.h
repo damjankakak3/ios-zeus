@@ -27,3 +27,15 @@ extern volatile uint32_t loglen;
 
 void usb_start(void);
 void usb_poll(void);
+void usb_stop(void);
+
+/* probe.c: live DT, screen */
+uint32_t fdt_be32(const void *p);
+uint64_t fdt_be64(const void *p);
+const uint8_t *fdt_prop(const uint8_t *dtb, const char *path, const char *prop, uint32_t *len);
+void fdt_children_reg(const uint8_t *dtb, const char *path, void (*cb)(const char *, uint64_t, uint64_t));
+void screen_kick(void);
+
+/* loader.c: returns only on error (the reason); nothing written then */
+const char *loader_boot(const uint8_t *dtb, uint64_t image_lo, uint64_t image_hi,
+			uint64_t fb_base, uint64_t fb_size);

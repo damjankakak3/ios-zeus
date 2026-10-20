@@ -55,6 +55,7 @@ uint64_t freq(void) { uint64_t v; __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(v
 void delay_ms(uint64_t ms) { uint64_t end = now() + freq() / 1000 * ms; while (now() < end) ; }
 
 static void kick(void) { wr32(CTL0 + CTL_START, 1); }
+void screen_kick(void) { kick(); }
 
 /* ---------- log buffer ---------- */
 
@@ -162,13 +163,15 @@ static void bands(void)
 
 /* ---------- minimal FDT reader ---------- */
 
-static uint32_t be32(const void *p)
+uint32_t fdt_be32(const void *p)
 {
 	const uint8_t *b = p;
 	return (uint32_t)b[0] << 24 | (uint32_t)b[1] << 16 | (uint32_t)b[2] << 8 | b[3];
 }
 
-static uint64_t be64(const void *p) { return (uint64_t)be32(p) << 32 | be32((const uint8_t *)p + 4); }
+uint64_t fdt_be64(const void *p) { return (uint64_t)fdt_be32(p) << 32 | fdt_be32((const uint8_t *)p + 4); }
+#define be32 fdt_be32
+#define be64 fdt_be64
 
 static int streq(const char *a, const char *b) { while (*a && *a == *b) a++, b++; return *a == *b; }
 
@@ -182,7 +185,7 @@ static int name_match(const char *node, const char *comp, int clen)
 }
 
 /* Property of the first node matching an absolute path; NULL if missing. */
-static const uint8_t *fdt_prop(const uint8_t *dtb, const char *path, const char *prop, uint32_t *len)
+const uint8_t *fdt_prop(const uint8_t *dtb, const char *path, const char *prop, uint32_t *len)
 {
 	if (be32(dtb) != 0xd00dfeed)
 		return 0;
@@ -226,6 +229,53 @@ static const uint8_t *fdt_prop(const uint8_t *dtb, const char *path, const char 
 	}
 }
 
+
+/* For each direct child of the node at `path` (a one-component path such as
+ * "/reserved-memory"): cb(child name, base, size) per <u64 base, u64 size>
+ * pair of its "reg" (2 address + 2 size cells, as on SM8450). */
+void fdt_children_reg(const uint8_t *dtb, const char *path, void (*cb)(const char *, uint64_t, uint64_t))
+{
+	if (be32(dtb) != 0xd00dfeed)
+		return;
+	const uint8_t *p = dtb + be32(dtb + 8);
+	const char *strs = (const char *)dtb + be32(dtb + 12);
+	const char *want = path + 1;
+	int wl = 0;
+	while (want[wl]) wl++;
+	int depth = 0, in_parent = 0;
+	const char *child = 0;
+	for (;;) {
+		uint32_t tok = be32(p);
+		p += 4;
+		if (tok == 1) {
+			const char *name = (const char *)p;
+			int nl = 0;
+			while (name[nl]) nl++;
+			p += (nl + 4) & ~3;
+			depth++;
+			if (depth == 2 && name_match(name, want, wl))
+				in_parent = 1;
+			else if (depth == 3 && in_parent)
+				child = name;
+		} else if (tok == 2) {
+			if (depth == 2 && in_parent)
+				return;
+			if (depth == 3)
+				child = 0;
+			depth--;
+		} else if (tok == 3) {
+			uint32_t l = be32(p), nameoff = be32(p + 4);
+			const uint8_t *val = p + 8;
+			p += 8 + ((l + 3) & ~3);
+			if (depth == 3 && in_parent && child && streq(strs + nameoff, "reg"))
+				for (uint32_t i = 0; i + 16 <= l; i += 16)
+					cb(child, be64(val + i), be64(val + i + 8));
+		} else if (tok == 4) {
+		} else {
+			return;
+		}
+	}
+}
 
 /* ---------- caches and memory watch ---------- */
 
@@ -427,7 +477,7 @@ void probe_main(const uint8_t *dtb, uint64_t load)
 	cache_flush((uint64_t)fb, fb_size);	/* drop ABL's cache lines first */
 	rect(0, 0, fb_w, fb_h, C_BG);
 	bands();
-	puts_c("ios-zeus probe 4\n", C_YEL);
+	puts_c("ios-zeus probe 5 (probe 4 + xnu loader)\n", C_YEL);
 	kick();
 
 	uint64_t el, mpidr, midr;
@@ -467,6 +517,24 @@ void probe_main(const uint8_t *dtb, uint64_t load)
 	usb_start();
 	kick();
 	pac_test();
+	kick();
+
+	/* xnu payload in the ramdisk (tools/mkpayload.py): boot it (loader.c). */
+	if (fdt_prop(dtb, "/chosen", "linux,initrd-start", &l)) {
+		extern char _head[], _end[];
+		const char *why = loader_boot(dtb, (uint64_t)_head, (uint64_t)_end, (uint64_t)fb, fb_size);
+		if (why) {
+			puts_c("LOADER STOPPED: ", C_RED);
+			puts_c(why, C_WHITE);
+			puts_c("\nnothing was written. reset in 30 s\n", C_WHITE);
+			kick();
+			uint64_t until = now() + 30 * freq();
+			while (now() < until)
+				usb_poll();
+			psci_call(PSCI_SYSTEM_RESET, 0, 0, 0);
+			for (;;) ;
+		}
+	}
 
 	cache_flush(MEMTEST_BASE, MEMTEST_HALF);
 	mem_fill(MEMTEST_BASE, 2 * MEMTEST_HALF);

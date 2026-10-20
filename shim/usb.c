@@ -374,5 +374,18 @@ void usb_start(void)
 	up = 1;
 }
 
+/* Before jumping to xnu: stop the controller (soft disconnect) so it does
+ * no more DMA into our buffers and the PC sees the device go away. */
+void usb_stop(void)
+{
+	if (!up)
+		return;
+	dwc_wr(DCTL, dwc_rd(DCTL) & ~DCTL_RUN_STOP);
+	uint64_t end = now() + freq() / 10;
+	while (!(dwc_rd(DSTS) & DSTS_DEVCTRLHLT) && now() < end)
+		;
+	up = 0;
+}
+
 uint32_t usb_events(void) { return events; }
 int usb_configured(void) { return configured; }
