@@ -43,7 +43,12 @@ thread state, signal frames and exception handling.
 3. First goal: kernel printf reaches `logs/` over USB. Then interrupts, timer, 8 CPUs.
 4. Root over USB (block protocol on the same DWC3; PC serves the image). No UFS driver at all.
 
-## Loader design (next step after 0002 builds)
+## Loader design (implemented 2026-10-20: shim/loader.c, tools/mkadt.py, tools/mkpayload.py; QEMU-tested)
+
+Changes against the first design below: the kernel goes in as a kernel-only MH_FILESET kernel collection (kmutil
+on CI), because only a fileset kernel rebases and signs its own arm64e pointers; the payload is found by a trailer
+at initrd-end (ABL appends our ramdisk after vendor_boot's); the console is the framebuffer (patch 0003), USB
+console later.
 
 XNU's entry contract (pexpert/pexpert/arm64/boot.h, osfmk/arm64/start.s): MMU off, x0 = physical address of a
 `boot_args` (Revision 2, Version 2): virtBase, physBase, memSize, topOfKernelData, Video (base, rowBytes, width,

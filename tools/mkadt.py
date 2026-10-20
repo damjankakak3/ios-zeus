@@ -7,7 +7,7 @@ Port of ios-sweet tools/mkadt.py: same idea (only what xnu's early boot and
 userland identity read), zeus hardware from docs/zeus-hw.md, and the identity
 of an iPhone 15 Pro (iPhone16,1 / D83AP). /product is copied from the real
 D83AP device tree when it is available. That tree is an Apple artifact and
-stays out of git; get it with tools/fetch-d83ap-adt.sh.
+stays out of git; get it with tools/fetch-d83ap-adt.py.
 """
 import argparse, hashlib, os, struct, sys
 
