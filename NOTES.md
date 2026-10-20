@@ -147,6 +147,11 @@
   OK**, kernel.development.zeus 22292512 bytes sha256 0109036c4902a7e4...4bd0. kmutil: "Missing Developer Kit ... KDK
   matching your build 25G83" (runner OS) although --kdk KDK_26.5_25F71 was given -> now --build 25F71
   --allow-missing-kdk --no-variant-extension.
+  **Run 39464767608 (8f66c4b): build + kmutil OK.** out/kernelcache.development.zeus = MH_FILESET arm64e (cpusub E),
+  20889600 bytes, sha256 2a879830c49eb651a2abce587493122fe35c96436c94f72d37479c6f2ebfe6d0; KC header
+  0xfffffe0007004000, entry com.apple.kernel at 0xfffffe0007008000; segments __TEXT __PRELINK_TEXT __DATA_CONST
+  __TEXT_EXEC __PRELINK_INFO __DATA __LINKEDIT (ends 0xfffffe00083f0000). kernel.development.zeus sha256 4a08c6b8...
+  **NEXT: first phone test** `python3 tools/zeus-probe.py --xnu xnu-kernel.zip` (artifact of this run). Not run yet.
   RUNTIME TODO: apple_arm64_common.h sets APPLE_ARM64_ARCH_FAMILY -> Apple sysreg accesses everywhere; each must be
   disabled for ZEUS before it runs on Cortex (sweet used a non-Apple-family config for this reason).
   RUNTIME TODO: with NO_CPU_OVRD, the CPU-off WFI path writes Apple S3_5_C15_C1_1 (IPI clear) -> UNDEF on Cortex.
