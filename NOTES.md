@@ -2,7 +2,7 @@
 
 ## Handoff (2026-10-19)
 
-- Goal: iOS 26 (iPhone 11 build, N104AP) on zeus, booted with `fastboot boot`, root from ramdisk/USB.
+- Goal: iOS 26 (iPhone 15 Pro build, iPhone16,1 / D83AP; user's choice 2026-10-20, was iPhone 11) on zeus, booted with `fastboot boot`, root from ramdisk/USB.
 - Phone (from the user): zeus 12/256 GB EEA, **bootloader unlocked**, HyperOS EEA (build: assume
   OS3.0.3.0.VLBEUXM, the newest EEA, unless the user says otherwise).
 - The local agent gave nothing useful; the user ran `tools/zeus-dt-extract.py` on their fastboot ROM zip

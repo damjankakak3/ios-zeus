@@ -1,7 +1,7 @@
 # ios-zeus
 
 Apple's **iOS 26** userland on the **Xiaomi 12 Pro** (`zeus`, Snapdragon 8 Gen 1 / SM8450),
-presented to iOS as an **iPhone 11** (`iPhone12,1` / `N104AP`).
+presented to iOS as an **iPhone 15 Pro** (`iPhone16,1` / `D83AP`, A17 Pro).
 
 A clean project. It borrows ideas from [`ios-sweet`](https://github.com/dipa-studio/ios-sweet)
 (iOS 16 on the Redmi Note 10 Pro) but shares no code history. Code from sweet is ported one

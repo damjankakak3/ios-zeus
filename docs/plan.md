@@ -42,16 +42,25 @@ How we make that a guarantee and not a promise:
   - **Target: iOS 26.x userland on xnu-12377** (pick the IPSW whose build matches a published tag).
   - iOS 27 later, once Apple publishes its xnu source.
 
-## Device identity: iPhone 11 (`iPhone12,1`, `N104AP`, A13 / T8030)
+## Device identity: iPhone 15 Pro (`iPhone16,1`, `D83AP`, A17 Pro / T8130)
 
-The same approach as sweet's iPhone X: ADT root compatible plus `/product` from the real
-N104AP device tree in the IPSW, with hw.product, hw.target and the home-button type.
-Open risks with every A13+ identity:
-- **AMX**: A13+ have Apple's undocumented matrix unit. If frameworks issue AMX
-  instructions on an "A13" without checking, we get SIGILL. Check how Accelerate/BNNS
-  read capabilities (commpage) and report no AMX. **[unknown, research first]**
-- Apple-only system registers and instructions used by userland (none known; check).
-- No GPU: iOS 26 "Liquid Glass" may need Metal more than iOS 16's CPU CoreAnimation fallback did. **[unknown]**
+User's choice (2026-10-20, was iPhone 11 / N104AP): the newest-generation identity, closest to zeus's ARMv9 CPU.
+ADT root compatible plus `/product` from the real D83AP device tree in the iOS 26 IPSW, with hw.product, hw.target
+and no home button. Only the device tree is taken from the IPSW (range download, nothing committed).
+
+What the identity does and does not change (facts from how iOS works, verify where marked):
+- **CPU instructions are not tied to the model.** iOS 26 userland is one arm64e build for all supported iPhones;
+  code that wants newer instructions checks `hw.optional.arm.FEAT_*` / the commpage, which our kernel fills from
+  zeus's own ID registers. So the instruction set userland uses depends on what we report, not on "iPhone 15 Pro".
+- **Kernel:** none of this touches our kernel; it stays our own no-monitor build (no SPTM/TXM even though real A17
+  devices use them).
+- Open risks:
+  - **AMX** (Apple matrix unit, A13+): if frameworks use it without checking, SIGILL. Report no AMX; check how
+    Accelerate/BNNS decide. **[unknown, research first]**
+  - The D83AP device tree is larger (SPTM/TXM, DCP display, Dynamic Island, ProMotion): we strip it to what our
+    kernel drives. Some daemons may expect SPTM-era properties. **[unknown]**
+  - Screen: D83 is 1179x2556, zeus is 1440x3200; we report zeus's real size.
+  - No GPU: iOS 26 "Liquid Glass" may need Metal more than iOS 16's CPU CoreAnimation fallback did. **[unknown]**
 
 ## SM8450 bring-up differences from SM7150 (all to be verified on hardware)
 
@@ -69,7 +78,7 @@ Open risks with every A13+ identity:
 2. Shim for zeus: `fastboot boot`, paint the ABL framebuffer, reboot. This proves the boot path.
 3. ZEUS XNU config on xnu-12377 (arm64e, no UFS), ramdisk root, console on the framebuffer.
 4. USB gadget + USB root daemon.
-5. iOS 26 iPhone 11 root image, then the userland bring-up as on sweet.
+5. iOS 26 iPhone 15 Pro root image, then the userland bring-up as on sweet.
 
 ## Effort, honestly
 

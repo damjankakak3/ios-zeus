@@ -35,7 +35,7 @@ thread state, signal frames and exception handling.
 
 ## Boot path (to build)
 
-1. Loader (from the probe): Mach-O kernel + Apple device tree (from the iPhone 11 / N104AP device tree in the
+1. Loader (from the probe): Mach-O kernel + Apple device tree (from the iPhone 15 Pro / D83AP device tree in the
    IPSW, filled in like sweet's `tools/mkadt.py`) + boot_args, carried in the boot.img ramdisk, MMU off, jump.
 2. ZEUS machine config: VMAPPLE minus hypercalls (PAC, timebase offset, WFK/kick), GICv3 at 0x17100000 with
    0x40000 GICR stride, Group 1 IRQs, arch timer (vtimer INTID 27), PSCI via SMC, no SME, console over the
@@ -62,7 +62,7 @@ memSizeActual. **XNU gets one contiguous RAM range: [physBase, physBase + memSiz
   entry = LC_UNIXTHREAD pc translated the same way. Then ADT, then boot_args, each 16 KB aligned;
   topOfKernelData = end of boot_args.
 - **Caches:** clean every written line to PoC (DC CIVAC), then IC IALLU, DSB, ISB, MMU off, jump with x0.
-- **ADT:** built on the PC from the iPhone 11 (N104AP) device tree in the iOS 26 IPSW (Apple artifact: fetched
+- **ADT:** built on the PC from the iPhone 15 Pro (D83AP) device tree in the iOS 26 IPSW (Apple artifact: fetched
   by the tool, never committed), with /chosen, /memory-map, 8 /cpus (MPIDR from the live DT), /arm-io with the GIC
   (0x17100000, GICR stride 0x40000), arch timer (vtimer INTID 27), and our own nodes. Tool: `tools/mkadt.py`
   (re-written, idea from sweet).
