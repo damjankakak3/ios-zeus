@@ -134,7 +134,7 @@ jobs:
           mkdir -p out
           cp -R dxb/fakeroot/System/Library/Kernels/. out/ 2>/dev/null || true
           ls -la out
-          (cd out && shasum -a 256 kernel.* > SHA256SUMS) || true
+          (cd out && find . -maxdepth 1 -type f -name 'kernel.*' -exec shasum -a 256 {} + | tee SHA256SUMS) || true
 
       - uses: actions/upload-artifact@v4
         if: always()

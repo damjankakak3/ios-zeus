@@ -86,6 +86,10 @@
   code (IOUnifiedAddressTranslator, pmap_iommu_*, sart/nvme/t*dart/sptm_gen3dart/uat descs, pmap_cs_configuration,
   pmap_has_iofilter_protected_write). Fix (0001 v11): config/ZEUS.unexported + config/Makefile filters the export
   lists into config/zeus-exports/ for ZEUS only. Next: artifact should contain kernel.development.zeus -> 0002.
+  **Run 39364183407 (d86abb1): SUCCESS.** Artifact xnu-kernel (id 12239376415, expires 2027-01-18) holds
+  kernel.development.zeus, 22283960 bytes, + kernel.development.zeus.link/. sha256 not recorded (Collect's shasum
+  hit the .link dir; fixed in the workflow). Patch 0001 = BUILD only; nothing in it makes the kernel run on Cortex.
+  Next: 0002 runtime (hypercalls, PAC keys, GICR stride, Apple sysregs, CPU-off path), then the loader.
   RUNTIME TODO: apple_arm64_common.h sets APPLE_ARM64_ARCH_FAMILY -> Apple sysreg accesses everywhere; each must be
   disabled for ZEUS before it runs on Cortex (sweet used a non-Apple-family config for this reason).
   RUNTIME TODO: with NO_CPU_OVRD, the CPU-off WFI path writes Apple S3_5_C15_C1_1 (IPI clear) -> UNDEF on Cortex.
